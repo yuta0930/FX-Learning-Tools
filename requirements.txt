@@ -1,0 +1,10 @@
+streamlit>=1.36.0
+yfinance>=0.2.40
+pandas>=2.2.2
+numpy>=1.26.4
+plotly>=5.22.0
+scikit-learn>=1.5.1
+pytz>=2024.1
+requests>=2.32.3
+MetaTrader5>=5.0.45; sys_platform == 'win32'
+
