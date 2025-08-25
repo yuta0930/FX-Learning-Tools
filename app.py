@@ -738,7 +738,7 @@ enable_double = st.sidebar.checkbox("ダブルトップ / ダブルボトム", T
 enable_flag   = st.sidebar.checkbox("フラッグ / ペナント", True)
 enable_hs     = st.sidebar.checkbox("ヘッド＆ショルダーズ（逆含む）", True)
 
-pat_lookback = st.sidebar.slider("検出対象の直近本数", 100, 600, 220, 20)
+pat_lookback = st.sidebar.slider("検出対象の直近本数", 0, 600, 220, 20)
 pat_min_touches = st.sidebar.slider("最小接触回数（線へのタッチ数）", 2, 5, 2)
 pat_tol_price = st.sidebar.number_input("価格許容誤差（ダブル/ボックス）", value=0.10, step=0.05)
 
@@ -873,12 +873,16 @@ def _draw_rectangle(fig, p: Pattern):
 def _draw_double(fig, p: Pattern):
     if p.kind=="double_top":
         top = p.params["top"]; neck = p.params["neck"]
+        # トップの水平線（黄色）
         fig.add_hline(y=top, line=dict(color="#ffd54f", width=2))
-        fig.add_hline(y=neck, line=dict(color="#90caf9", width=2, dash="dot"))
-    else:
+        # ネックライン（赤点線）
+        fig.add_hline(y=neck, line=dict(color="#ef5350", width=2, dash="dot"))
+    elif p.kind=="double_bottom":
         bot = p.params["bottom"]; neck = p.params["neck"]
+        # ボトムの水平線（水色）
         fig.add_hline(y=bot, line=dict(color="#4fc3f7", width=2))
-        fig.add_hline(y=neck, line=dict(color="#90caf9", width=2, dash="dot"))
+        # ネックライン（緑点線）
+        fig.add_hline(y=neck, line=dict(color="#66bb6a", width=2, dash="dot"))
 
 def _draw_flag(fig, p: Pattern):
     sub = df.loc[p.params["sub_start"] : p.params["sub_end"]]
