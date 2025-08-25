@@ -1063,6 +1063,11 @@ fig.update_layout(template="plotly_dark", paper_bgcolor=COLOR_BG, plot_bgcolor=C
                   font=dict(color=COLOR_TEXT, size=12))
 fig.update_xaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID)
 fig.update_yaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID)
+
+# ★ ここでズーム保持を追加
+fig.update_layout(uirevision="fx-live")
+
+# 描画
 st.plotly_chart(fig, use_container_width=True)
 st.caption(f"最終更新: {pd.Timestamp.now(tz=JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
@@ -1528,8 +1533,6 @@ else:
         st.caption("※ P_up/P_dn は学習モデル（水平ブレイク）を、パターンの境界（上辺/下辺/ネック/チャネル）に当てはめて推定。ターゲットは測定値（旗竿・厚み・ヘッド高さ 等）。")
     else:
         st.info("パターンは検出されましたが、テーブル化できる十分な指標がありません。")
-
-import streamlit as st
 
 st.markdown("---")
 st.markdown("""
