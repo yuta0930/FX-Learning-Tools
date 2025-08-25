@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-# Streamlit FX Auto Lines - 完全版 + Flag/Pennant + Head&Shoulders + Ghost Projection
-# 黒背景・自動更新・ニュース堅牢パーサ・バックテスト＋リテスト指数・チャネル統計
-# “今から”ブレイク確率＋EV・手動再学習ボタン・パターン検出（Triangle/Rectangle/Double/Flag/Pennant/H&S）
-# ＋ 期待値を使った将来パスのゴースト投影（EV直線 / ボラ扇形）
+# Streamlit FX Auto Lines - 完全版 + News Shading + Flag/Pennant + H&S + Ghost Projection
+# 黒背景・重要度別ニュースウィンドウ赤影・ソフト抑制・自動ライン/パターン/EV/ブレイク確率・手動再学習
 
 import os, math, json, subprocess, sys, pathlib, re, warnings
+from datetime import timedelta
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -73,8 +72,7 @@ def in_sessions(ts: pd.Timestamp) -> str:
     return "Other"
 
 def pip_value(pair="USDJPY"):
-    # USDJPY想定
-    return 0.01
+    return 0.01  # USDJPY想定
 
 def _select_first(values) -> str:
     return list(dict.fromkeys(map(str, values)))[0]
@@ -171,7 +169,7 @@ signal_mode = st.sidebar.selectbox(
     ["水平線ブレイク(終値)", "トレンドラインブレイク(終値)", "チャネル上抜け/下抜け(終値)", "リテスト指値(水平線)"],
     index=0
 )
-retest_wait_k = st.sidebar.slider("リテスト待機本数K", 3, 30, 10)
+retest_wait_k_base = st.sidebar.slider("リテスト待機本数K", 3, 30, 10)
 st.sidebar.caption("ブレイク後、K本以内にライン/バンドへ戻ったかで『リテストあり/なし』を判定（指数0〜1も算出）")
 
 st.sidebar.markdown("---")
@@ -191,7 +189,7 @@ chan_k = st.sidebar.slider("チャネル幅（σの倍率）", 0.5, 3.0, 2.0, 0.
 st.sidebar.markdown("---")
 st.sidebar.subheader("判定バッファ")
 touch_buffer = st.sidebar.number_input("接触バッファ（価格）", value=0.05, step=0.01)
-break_buffer = st.sidebar.number_input("ブレイクバッファ（価格）", value=0.05, step=0.01)
+break_buffer_base = st.sidebar.number_input("ブレイクバッファ（価格）", value=0.05, step=0.01)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("重要度スコアの重み")
@@ -202,20 +200,44 @@ w_vol = st.sidebar.slider("ボラ（ATR）", 0.0, 1.0, 0.20, 0.05)
 w_sum = max(1e-9, w_touch + w_recent + w_session + w_vol)
 w_touch, w_recent, w_session, w_vol = [w/w_sum for w in (w_touch, w_recent, w_session, w_vol)]
 
+# ---------- ニュース・指標フィルタ & 赤影 ----------
 st.sidebar.markdown("---")
-st.sidebar.subheader("ニュース・指標フィルタ")
+st.sidebar.subheader("ニュース・指標フィルタ / 赤影")
 news_file = st.sidebar.file_uploader("ニュースCSVをアップロード（任意）", type=["csv"])
 st.sidebar.caption("受理列: time/timestamp/datetime または date+time、importance[, title]（JST推奨）")
-news_win = st.sidebar.slider("抑制ウィンドウ（±分）", 0, 120, 30)
-news_imp_min = st.sidebar.slider("重要度しきい値", 1, 5, 3)
-apply_news_filter = st.sidebar.checkbox("シグナルをニュース近傍で無効化", value=False)
 
+# フィルタ方式
+news_filter_mode = st.sidebar.radio(
+    "フィルタ方式",
+    ["一律±分", "重要度別（赤影と同じ）"],
+    index=1, horizontal=True
+)
+news_win = st.sidebar.slider("一律±分（上を選んだときのみ使用）", 0, 120, 30)
+news_imp_min = st.sidebar.slider("重要度しきい値 (>=)", 1, 5, 3)
+
+# 重要度→±分マッピング（赤影/重要度別フィルタで使用）
+st.sidebar.caption("重要度別ウィンドウ（左右±分）")
+map_5 = st.sidebar.number_input("★5 → ±分", value=90, step=5)
+map_4 = st.sidebar.number_input("★4 → ±分", value=30, step=5)
+map_3 = st.sidebar.number_input("★3 → ±分", value=20, step=5)
+map_2 = st.sidebar.number_input("★2 → ±分", value=0, step=5)
+map_1 = st.sidebar.number_input("★1 → ±分", value=0, step=5)
+use_news_shade = st.sidebar.checkbox("チャートに赤影を重ねて表示", value=True)
+
+# ハード/ソフト抑制
+apply_news_filter = st.sidebar.checkbox("ハード抑制（窓内のシグナル無効化）", value=True)
+use_soft_suppress = st.sidebar.checkbox("ソフト抑制（窓内だけ判定を厳しめに）", value=True)
+soft_break_add = st.sidebar.number_input("ソフト: ブレイクバッファ 追加", value=0.02, step=0.01, format="%.2f")
+soft_K_add = st.sidebar.slider("ソフト: K 追加", 0, 10, 4)
+
+# ---------------- バックテスト ----------------
 st.sidebar.markdown("---")
 st.sidebar.subheader("バックテスト")
 fwd_n = st.sidebar.slider("ブレイク後 N 本（損益判定）", 5, 120, 20)
 spread_pips = st.sidebar.number_input("想定スプレッド（pips）", value=0.5, step=0.1)
 run_bt = st.sidebar.button("▶ バックテストを実行")
 
+# ---------------- ブレイク確率 / EV ----------------
 st.sidebar.markdown("---")
 st.sidebar.subheader("ブレイク確率（今から）")
 show_break_prob = st.sidebar.checkbox("今からの水平線ブレイク確率を表示", value=True)
@@ -375,6 +397,142 @@ def compute_level_scores(df: pd.DataFrame, levels: list, touch_buffer: float,
 
 score_df = compute_level_scores(df, levels, touch_buffer, w_touch, w_recent, w_session, w_vol)
 
+# ---------------- ニュースCSV（堅牢パーサ） ----------------
+def parse_news_csv(file) -> pd.DataFrame:
+    if file is None:
+        return pd.DataFrame(columns=["time","importance","title"])
+    try:
+        df = pd.read_csv(file, dtype=str)
+    except Exception:
+        file.seek(0); df = pd.read_csv(file, dtype=str, header=None)
+    df = df.astype(str).fillna("")
+    def norm(s: str) -> str:
+        s = s.strip().replace("\u3000"," "); s = s.lower()
+        return re.sub(r"[\s\-_/()]", "", s)
+    TIME_CANDS = {"time","timestamp","datetime","date_time","timejst","datetimejst","日時","日付時刻","発表時刻","発表時間","時刻","時間","date","when"}
+    DATE_ONLY = {"date","日付","発表日"}
+    CLOCK_ONLY= {"time","時刻","発表時刻","発表時間","時間"}
+    IMP_CANDS  = {"importance","重要度","impact","rank","priority","優先度","star","stars"}
+    TITLE_CANDS= {"title","イベント","指標名","headline","event","name","内容","subject"}
+    orig_cols = list(df.columns)
+    norm_cols = [norm(c) for c in orig_cols]
+    col_map = dict(zip(norm_cols, orig_cols))
+    time_col=imp_col=title_col=None
+    for nc in norm_cols:
+        if nc in {norm(x) for x in TIME_CANDS} and nc not in {norm(x) for x in DATE_ONLY}:
+            time_col = col_map[nc]; break
+    if time_col is None:
+        date_col = None; clock_col=None
+        for nc in norm_cols:
+            if nc in {norm(x) for x in DATE_ONLY}: date_col = col_map[nc]
+            if nc in {norm(x) for x in CLOCK_ONLY}: clock_col = col_map[nc]
+        if date_col and clock_col:
+            df["_tmp_time"] = (df[date_col].astype(str).str.strip()+" "+df[clock_col].astype(str).str.strip()).str.strip()
+            time_col = "_tmp_time"
+    if time_col is None:
+        best_col=None; best_ok=-1
+        for c in df.columns:
+            tryconv = pd.to_datetime(df[c], utc=True, errors="coerce", infer_datetime_format=True)
+            ok = tryconv.notna().sum()
+            if ok > best_ok and ok>0:
+                best_ok = ok; best_col = c
+        if best_col is not None: time_col = best_col
+    for nc in norm_cols:
+        if nc in {norm(x) for x in IMP_CANDS}:
+            imp_col = col_map[nc]; break
+    if imp_col is None:
+        best_col=None; best_numeric=-1
+        for c in df.columns:
+            if c == time_col: continue
+            s = pd.to_numeric(df[c], errors="coerce")
+            numeric_ok = s.notna().sum()
+            if numeric_ok > best_numeric and numeric_ok>0:
+                best_numeric = numeric_ok; best_col=c
+        if best_col is not None: imp_col = best_col
+    for nc in norm_cols:
+        if nc in {norm(x) for x in TITLE_CANDS}:
+            title_col = col_map[nc]; break
+    if title_col is None:
+        cand = [c for c in df.columns if c not in {time_col, imp_col}]
+        title_col = cand[0] if cand else None
+
+    if time_col is None or imp_col is None:
+        raise ValueError("ニュースCSVに 'time'（または date+time）と 'importance' が必要です。")
+
+    def parse_dt_series(s: pd.Series) -> pd.Series:
+        dt = pd.to_datetime(s, utc=True, errors="coerce", infer_datetime_format=True)
+        bad = dt.isna()
+        if bad.any():
+            fmt_list = ["%Y-%m-%d %H:%M","%Y/%m/%d %H:%M","%Y-%m-%d %H:%M:%S","%Y/%m/%d %H:%M:%S"]
+            raw = s[bad].astype(str).str.strip()
+            fixed = pd.Series([pd.NaT]*len(raw), index=raw.index)
+            for fmt in fmt_list:
+                try:
+                    parsed = pd.to_datetime(raw, format=fmt, utc=True, errors="coerce")
+                    fixed = fixed.fillna(parsed)
+                except Exception:
+                    pass
+            dt.loc[bad] = fixed
+        bad = dt.isna()
+        if bad.any():
+            raw = s[bad].astype(str).str.strip()
+            def numparse(x):
+                try:
+                    v = float(x)
+                    if v > 10_000_000_000: return pd.to_datetime(v, unit="ms", utc=True)
+                    return pd.to_datetime(v, unit="s", utc=True)
+                except Exception:
+                    return pd.NaT
+            dt.loc[bad] = raw.apply(numparse)
+        return dt
+
+    dt_utc = parse_dt_series(df[time_col])
+    dt_utc = pd.to_datetime(dt_utc, utc=True, errors="coerce")
+    if dt_utc.notna().sum() == 0:
+        raise ValueError("ニュースCSVの日時を解釈できませんでした。")
+    dt_jst = dt_utc.dt.tz_convert(JST)
+    imp = pd.to_numeric(df[imp_col], errors="coerce").fillna(0).astype(int)
+    ttl = df[title_col] if (title_col in df.columns) else ""
+    out = pd.DataFrame({"time": dt_jst, "importance": imp, "title": ttl}).dropna(subset=["time"])
+    return out.sort_values("time").reset_index(drop=True)
+
+news_df = parse_news_csv(news_file)
+
+# ---- 重要度別ウィンドウ生成 & 赤影描画ユーティリティ ----
+def build_event_windows(events_df: pd.DataFrame, imp_threshold: int, mapping: dict[int,int]) -> pd.DataFrame:
+    if events_df.empty:
+        return pd.DataFrame(columns=["start","end","importance","title"])
+    rows=[]
+    for _, r in events_df.iterrows():
+        imp = int(r["importance"])
+        if imp < imp_threshold: 
+            continue
+        minutes = mapping.get(imp, 0)
+        start = r["time"] - timedelta(minutes=minutes)
+        end   = r["time"] + timedelta(minutes=minutes)
+        rows.append({"start": start, "end": end, "importance": imp, "title": r.get("title", "")})
+    windows = pd.DataFrame(rows)
+    return windows.sort_values("start").reset_index(drop=True)
+
+def is_suppressed(ts: pd.Timestamp, windows_df: pd.DataFrame) -> bool:
+    if windows_df.empty: return False
+    return bool(((windows_df["start"] <= ts) & (ts <= windows_df["end"])).any())
+
+def add_news_shading_to_fig(fig: go.Figure, windows_df: pd.DataFrame) -> go.Figure:
+    if windows_df.empty: return fig
+    color_map = {5:"rgba(255,0,0,0.18)", 4:"rgba(255,0,0,0.12)", 3:"rgba(255,0,0,0.08)"}
+    shapes = list(fig.layout.shapes) if fig.layout.shapes else []
+    for _, r in windows_df.iterrows():
+        col = color_map.get(int(r["importance"]), "rgba(255,0,0,0.08)")
+        shapes.append(dict(type="rect", xref="x", x0=r["start"], x1=r["end"],
+                           yref="paper", y0=0, y1=1, fillcolor=col, line=dict(width=0), layer="below"))
+    fig.update_layout(shapes=shapes)
+    return fig
+
+# マッピング辞書
+imp_map = {5:int(map_5), 4:int(map_4), 3:int(map_3), 2:int(map_2), 1:int(map_1)}
+windows_df = build_event_windows(news_df, imp_threshold=news_imp_min, mapping=imp_map) if news_df is not None else pd.DataFrame()
+
 # ---------------- パターン検出（Triangle / Rectangle / Double / Flag / Pennant / H&S） ----------------
 @dataclass
 class Pattern:
@@ -462,7 +620,6 @@ def detect_double_top_bottom(df, piv_high, piv_low, lookback=200, tol=0.1, min_g
             out.append(Pattern("double_bottom", p1, p2, dict(bottom=botv, neck=neck), 60.0, "up"))
     return out
 
-# ---- 追加：Flag / Pennant 検出（簡易） ----
 def detect_flag_pennant(df, lookback=220, Npush=30, min_flag_bars=8, max_flag_bars=40, sigma_k=1.0, pole_min_atr=2.0):
     if len(df) < Npush + max_flag_bars + 5: return []
     sub = df.tail(lookback)
@@ -507,7 +664,6 @@ def detect_flag_pennant(df, lookback=220, Npush=30, min_flag_bars=8, max_flag_ba
         direction_bias=direction_bias
     )]
 
-# ---- 追加：Head & Shoulders 検出（極値ベースの簡易） ----
 def detect_head_shoulders(df, piv_high, piv_low, lookback=260, tol=0.003):
     out=[]
     sub = df.tail(lookback)
@@ -619,7 +775,7 @@ except Exception as e:
     st.error(f"パターン検出中にエラー: {e}")
     patterns = []
 
-# ---------------- モデル読み込み（TTL付きキャッシュ） ※ゴーストでも使うのでここに移動 ----------------
+# ---------------- モデル読み込み（TTL付きキャッシュ） ----------------
 @st.cache_resource(show_spinner=False, ttl=600)
 def _load_break_model_cached(path: str):
     return joblib.load(path)
@@ -659,7 +815,7 @@ def make_features_for_level(df, ts, level, dir_sign, touch_buffer, trend_look=15
     sign = 1 if (dir_sign==1 and c>=level) or (dir_sign==-1 and c<=level) else -1
     return [dir_sign, dist, sign, near, a/max(1e-6,c), slope, touches, last_touch_bar, tokyo, london, ny]
 
-# ====================== ここからチャート描画 ======================
+# ====================== チャート描画 ======================
 fig = go.Figure()
 fig.add_trace(go.Candlestick(
     x=df.index,
@@ -756,16 +912,19 @@ for p in patterns:
     elif p.kind in ("head_shoulders","inverse_head_shoulders"):
         _draw_hs(fig, p)
 
+# ---- 赤影（重要度別ウィンドウ）を重ねる ----
+if use_news_shade and not windows_df.empty:
+    fig = add_news_shading_to_fig(fig, windows_df)
+
 # --- 疑似チャート投影（ゴースト）コントロール ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("疑似チャート投影（ゴースト）")
 enable_ghost = st.sidebar.checkbox("パターンから将来パスを薄く重ねる", value=False)
 ghost_h = st.sidebar.slider("投影本数（バー）", 10, 120, 40, help="何本先まで薄く描くか")
-ghost_mode = st.sidebar.selectbox("方法", ["EV直線", "ボラ扇形(平均)"], index=0,
-                                  help="EV直線: 上下の期待値を重み付けした直線 / ボラ扇形: ATRから作る予測レンジの扇形")
+ghost_mode = st.sidebar.selectbox("方法", ["EV直線", "ボラ扇形(平均)"], index=0)
 ghost_alpha = st.sidebar.slider("透明度", 0.05, 0.6, 0.18)
-ghost_fan_k = st.sidebar.slider("扇形の幅k（σ係数）", 0.5, 3.0, 1.5, 0.5, help="ボラ扇形で使用（大きいほど広い）")
-ghost_sims = st.sidebar.slider("ランダムウォーク本数（任意）", 0, 300, 0, help="0のままでOK。>0なら薄い試行線を追加表示")
+ghost_fan_k = st.sidebar.slider("扇形の幅k（σ係数）", 0.5, 3.0, 1.5, 0.5)
+ghost_sims = st.sidebar.slider("ランダムウォーク本数（任意）", 0, 300, 0)
 
 # --- ゴーストのための補助関数 ---
 def _pattern_levels_for_prob(df, p: Pattern):
@@ -862,7 +1021,6 @@ if enable_ghost:
                 else: P_up, P_dn = 0.5, 0.5
 
         idx0 = df.index[-1]
-        # 推定頻度：足種から自動推測（失敗時は1分）
         inferred = pd.infer_freq(df.index)
         freq = inferred if inferred else "T"
         future_idx = pd.date_range(idx0, periods=ghost_h+1, freq=freq, tz=idx0.tz)
@@ -908,118 +1066,30 @@ fig.update_yaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, 
 st.plotly_chart(fig, use_container_width=True)
 st.caption(f"最終更新: {pd.Timestamp.now(tz=JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-# ---------------- ニュースCSV（堅牢パーサ） ----------------
-def parse_news_csv(file) -> pd.DataFrame:
-    if file is None:
-        return pd.DataFrame(columns=["time","importance","title"])
-    try:
-        df = pd.read_csv(file, dtype=str)
-    except Exception:
-        file.seek(0); df = pd.read_csv(file, dtype=str, header=None)
-    df = df.astype(str).fillna("")
-    def norm(s: str) -> str:
-        s = s.strip().replace("\u3000"," "); s = s.lower()
-        return re.sub(r"[\s\-_/()]", "", s)
-    TIME_CANDS = {"time","timestamp","datetime","date_time","timejst","datetimejst","日時","日付時刻","発表時刻","発表時間","時刻","時間","date","when"}
-    DATE_ONLY = {"date","日付","発表日"}
-    CLOCK_ONLY= {"time","時刻","発表時刻","発表時間","時間"}
-    IMP_CANDS  = {"importance","重要度","impact","rank","priority","優先度","star","stars"}
-    TITLE_CANDS= {"title","イベント","指標名","headline","event","name","内容","subject"}
-    orig_cols = list(df.columns)
-    norm_cols = [norm(c) for c in orig_cols]
-    col_map = dict(zip(norm_cols, orig_cols))
-    time_col=imp_col=title_col=None
-    for nc in norm_cols:
-        if nc in {norm(x) for x in TIME_CANDS} and nc not in {norm(x) for x in DATE_ONLY}:
-            time_col = col_map[nc]; break
-    if time_col is None:
-        date_col = None; clock_col=None
-        for nc in norm_cols:
-            if nc in {norm(x) for x in DATE_ONLY}: date_col = col_map[nc]
-            if nc in {norm(x) for x in CLOCK_ONLY}: clock_col = col_map[nc]
-        if date_col and clock_col:
-            df["_tmp_time"] = (df[date_col].astype(str).str.strip()+" "+df[clock_col].astype(str).str.strip()).str.strip()
-            time_col = "_tmp_time"
-    if time_col is None:
-        best_col=None; best_ok=-1
-        for c in df.columns:
-            tryconv = pd.to_datetime(df[c], utc=True, errors="coerce", infer_datetime_format=True)
-            ok = tryconv.notna().sum()
-            if ok > best_ok and ok>0:
-                best_ok = ok; best_col = c
-        if best_col is not None: time_col = best_col
-    for nc in norm_cols:
-        if nc in {norm(x) for x in IMP_CANDS}:
-            imp_col = col_map[nc]; break
-    if imp_col is None:
-        best_col=None; best_numeric=-1
-        for c in df.columns:
-            if c == time_col: continue
-            s = pd.to_numeric(df[c], errors="coerce")
-            numeric_ok = s.notna().sum()
-            if numeric_ok > best_numeric and numeric_ok>0:
-                best_numeric = numeric_ok; best_col=c
-        if best_col is not None: imp_col = best_col
-    for nc in norm_cols:
-        if nc in {norm(x) for x in TITLE_CANDS}:
-            title_col = col_map[nc]; break
-    if title_col is None:
-        cand = [c for c in df.columns if c not in {time_col, imp_col}]
-        title_col = cand[0] if cand else None
-
-    if time_col is None or imp_col is None:
-        raise ValueError("ニュースCSVに 'time'（または date+time）と 'importance' が必要です。")
-
-    def parse_dt_series(s: pd.Series) -> pd.Series:
-        dt = pd.to_datetime(s, utc=True, errors="coerce", infer_datetime_format=True)
-        bad = dt.isna()
-        if bad.any():
-            fmt_list = ["%Y-%m-%d %H:%M","%Y/%m/%d %H:%M","%Y-%m-%d %H:%M:%S","%Y/%m/%d %H:%M:%S"]
-            raw = s[bad].astype(str).str.strip()
-            fixed = pd.Series([pd.NaT]*len(raw), index=raw.index)
-            for fmt in fmt_list:
-                try:
-                    parsed = pd.to_datetime(raw, format=fmt, utc=True, errors="coerce")
-                    fixed = fixed.fillna(parsed)
-                except Exception:
-                    pass
-            dt.loc[bad] = fixed
-        bad = dt.isna()
-        if bad.any():
-            raw = s[bad].astype(str).str.strip()
-            def numparse(x):
-                try:
-                    v = float(x)
-                    if v > 10_000_000_000: return pd.to_datetime(v, unit="ms", utc=True)
-                    return pd.to_datetime(v, unit="s", utc=True)
-                except Exception:
-                    return pd.NaT
-            dt.loc[bad] = raw.apply(numparse)
-        return dt
-
-    dt_utc = parse_dt_series(df[time_col])
-    dt_utc = pd.to_datetime(dt_utc, utc=True, errors="coerce")
-    if dt_utc.notna().sum() == 0:
-        raise ValueError("ニュースCSVの日時を解釈できませんでした。")
-    dt_jst = dt_utc.dt.tz_convert(JST)
-    imp = pd.to_numeric(df[imp_col], errors="coerce").fillna(0).astype(int)
-    ttl = df[title_col] if (title_col in df.columns) else ""
-    out = pd.DataFrame({"time": dt_jst, "importance": imp, "title": ttl}).dropna(subset=["time"])
-    return out.sort_values("time").reset_index(drop=True)
-
-news_df = parse_news_csv(news_file)
+# ---------------- 近傍ニュース判定（モード別） ----------------
+def near_news(ts: pd.Timestamp) -> bool:
+    if news_filter_mode == "重要度別（赤影と同じ）":
+        return is_suppressed(ts, windows_df)
+    else:
+        if news_df.empty: return False
+        win = pd.Timedelta(minutes=news_win)
+        cond = (news_df["importance"] >= news_imp_min) & (news_df["time"].between(ts-win, ts+win))
+        return bool(cond.any())
 
 # ---------------- シグナル（直近バー） ----------------
 st.subheader("📣 シグナル（直近バー）")
-def near_news(ts: pd.Timestamp) -> bool:
-    if news_df.empty: return False
-    win = pd.Timedelta(minutes=news_win)
-    cond = (news_df["importance"] >= news_imp_min) & (news_df["time"].between(ts-win, ts+win))
-    return bool(cond.any())
-
 i_last = len(df)-1
 c_last = float(df["close"].iloc[i_last]); h_last = float(df["high"].iloc[i_last]); l_last = float(df["low"].iloc[i_last])
 ts_last = df.index[i_last]
+
+# ソフト抑制：窓内ならブレイクバッファ/K を強化
+if use_soft_suppress and near_news(ts_last):
+    break_buffer = break_buffer_base + soft_break_add
+    retest_wait_k = retest_wait_k_base + soft_K_add
+else:
+    break_buffer = break_buffer_base
+    retest_wait_k = retest_wait_k_base
+
 alerts = []
 if signal_mode == "水平線ブレイク(終値)":
     for lv in levels:
@@ -1054,7 +1124,7 @@ else:
         else:
             st.success(f"{kind}: {msg} @ {ts_last}")
 
-# ---------------- バックテスト（Retest指数つき） ----------------
+# ---------------- バックテスト（Retest指数つき / ハード抑制は従来通り） ----------------
 def compute_retest(series_close: pd.Series, target: float, start_idx: int, K: int, tol_abs: float):
     hits = 0; checks = 0; hit_once = False
     last = len(series_close) - 1
@@ -1067,79 +1137,87 @@ def compute_retest(series_close: pd.Series, target: float, start_idx: int, K: in
     idx_val = (hits / checks) if checks > 0 else 0.0
     return idx_val, hit_once
 
-def backtest(df: pd.DataFrame, levels: list, fwd_n: int, break_buffer: float,
+def backtest(df: pd.DataFrame, levels: list, fwd_n: int, break_buffer_arg: float,
              spread_pips: float, news_df: pd.DataFrame, news_win: int,
-             news_imp_min: int, apply_news: bool, signal_mode: str, retest_wait_k: int,
+             news_imp_min: int, apply_news: bool, signal_mode: str, retest_wait_k_arg: int,
              touch_buffer: float):
     rows=[]
     if len(df) <= fwd_n+1:
         return pd.DataFrame(columns=["time","mode","level_or_val","dir","entry","exit","ret_pips","retest_index","retest_hit"])
-    win_td = pd.Timedelta(minutes=news_win)
     pv = pip_value("USDJPY")
     close_s = df["close"]
+    use_imp_mode = (news_filter_mode == "重要度別（赤影と同じ）")
     for i in range(1, len(df)-fwd_n):
         t = df.index[i]
         c  = float(df["close"].iloc[i])
         l1 = float(df["low"].iloc[i-1]); h1 = float(df["high"].iloc[i-1])
-        if apply_news and not news_df.empty:
-            if ((news_df["importance"] >= news_imp_min) & (news_df["time"].between(t-win_td, t+win_td))).any():
-                continue
+        # ハード抑制
+        if apply_news:
+            if use_imp_mode:
+                if is_suppressed(t, windows_df): 
+                    continue
+            else:
+                if not news_df.empty:
+                    win = pd.Timedelta(minutes=news_win)
+                    if ((news_df["importance"] >= news_imp_min) & (news_df["time"].between(t-win, t+win))).any():
+                        continue
+        # 以降は従来通り
         if signal_mode == "水平線ブレイク(終値)":
             for lv in levels:
-                if (c > lv + break_buffer) and (l1 <= lv):
+                if (c > lv + break_buffer_arg) and (l1 <= lv):
                     entry, exitp = c, float(df["close"].iloc[i+fwd_n])
-                    ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k), float(touch_buffer))
+                    ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k_arg), float(touch_buffer))
                     rows.append(dict(time=t, mode="水平ブレイク上", level_or_val=float(lv),
                                      dir="long", entry=entry, exit=exitp,
                                      ret_pips=(exitp-entry)/pv - spread_pips,
                                      retest_index=ri, retest_hit=rh))
-                if (c < lv - break_buffer) and (h1 >= lv):
+                if (c < lv - break_buffer_arg) and (h1 >= lv):
                     entry, exitp = c, float(df["close"].iloc[i+fwd_n])
-                    ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k), float(touch_buffer))
+                    ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k_arg), float(touch_buffer))
                     rows.append(dict(time=t, mode="水平ブレイク下", level_or_val=float(lv),
                                      dir="short", entry=entry, exit=exitp,
                                      ret_pips=(entry-exitp)/pv - spread_pips,
                                      retest_index=ri, retest_hit=rh))
         elif signal_mode == "トレンドラインブレイク(終値)":
-            if not trend: continue
-            tl = trend["y1"]
-            if (c > tl + break_buffer) and (l1 <= tl):
-                entry, exitp = c, float(df["close"].iloc[i+fwd_n])
-                ri, rh = compute_retest(close_s, tl, i, int(retest_wait_k), float(touch_buffer))
-                rows.append(dict(time=t, mode="TLブレイク上", level_or_val=float(tl),
-                                 dir="long", entry=entry, exit=exitp,
-                                 ret_pips=(exitp-entry)/pv - spread_pips,
-                                 retest_index=ri, retest_hit=rh))
-            if (c < tl - break_buffer) and (h1 >= tl):
-                entry, exitp = c, float(df["close"].iloc[i+fwd_n])
-                ri, rh = compute_retest(close_s, tl, i, int(retest_wait_k), float(touch_buffer))
-                rows.append(dict(time=t, mode="TLブレイク下", level_or_val=float(tl),
-                                 dir="short", entry=entry, exit=exitp,
-                                 ret_pips=(entry-exitp)/pv - spread_pips,
-                                 retest_index=ri, retest_hit=rh))
+            if trend:
+                tl = trend["y1"]
+                if (c > tl + break_buffer_arg) and (l1 <= tl):
+                    entry, exitp = c, float(df["close"].iloc[i+fwd_n])
+                    ri, rh = compute_retest(close_s, tl, i, int(retest_wait_k_arg), float(touch_buffer))
+                    rows.append(dict(time=t, mode="TLブレイク上", level_or_val=float(tl),
+                                     dir="long", entry=entry, exit=exitp,
+                                     ret_pips=(exitp-entry)/pv - spread_pips,
+                                     retest_index=ri, retest_hit=rh))
+                if (c < tl - break_buffer_arg) and (h1 >= tl):
+                    entry, exitp = c, float(df["close"].iloc[i+fwd_n])
+                    ri, rh = compute_retest(close_s, tl, i, int(retest_wait_k_arg), float(touch_buffer))
+                    rows.append(dict(time=t, mode="TLブレイク下", level_or_val=float(tl),
+                                     dir="short", entry=entry, exit=exitp,
+                                     ret_pips=(entry-exitp)/pv - spread_pips,
+                                     retest_index=ri, retest_hit=rh))
         elif signal_mode == "チャネル上抜け/下抜け(終値)":
-            if not trend or trend["sigma"] <= 0: continue
-            up = trend["y1"] + chan_k*trend["sigma"]
-            dn = trend["y1"] - chan_k*trend["sigma"]
-            if c > up + break_buffer:
-                entry, exitp = c, float(df["close"].iloc[i+fwd_n])
-                ri, rh = compute_retest(close_s, up, i, int(retest_wait_k), float(touch_buffer))
-                rows.append(dict(time=t, mode="チャネル上抜け", level_or_val=float(up),
-                                 dir="long", entry=entry, exit=exitp,
-                                 ret_pips=(exitp-entry)/pv - spread_pips,
-                                 retest_index=ri, retest_hit=rh))
-            if c < dn - break_buffer:
-                entry, exitp = c, float(df["close"].iloc[i+fwd_n])
-                ri, rh = compute_retest(close_s, dn, i, int(retest_wait_k), float(touch_buffer))
-                rows.append(dict(time=t, mode="チャネル下抜け", level_or_val=float(dn),
-                                 dir="short", entry=entry, exit=exitp,
-                                 ret_pips=(entry-exitp)/pv - spread_pips,
-                                 retest_index=ri, retest_hit=rh))
+            if trend and trend["sigma"] > 0:
+                up = trend["y1"] + chan_k*trend["sigma"]
+                dn = trend["y1"] - chan_k*trend["sigma"]
+                if c > up + break_buffer_arg:
+                    entry, exitp = c, float(df["close"].iloc[i+fwd_n])
+                    ri, rh = compute_retest(close_s, up, i, int(retest_wait_k_arg), float(touch_buffer))
+                    rows.append(dict(time=t, mode="チャネル上抜け", level_or_val=float(up),
+                                     dir="long", entry=entry, exit=exitp,
+                                     ret_pips=(exitp-entry)/pv - spread_pips,
+                                     retest_index=ri, retest_hit=rh))
+                if c < dn - break_buffer_arg:
+                    entry, exitp = c, float(df["close"].iloc[i+fwd_n])
+                    ri, rh = compute_retest(close_s, dn, i, int(retest_wait_k_arg), float(touch_buffer))
+                    rows.append(dict(time=t, mode="チャネル下抜け", level_or_val=float(dn),
+                                     dir="short", entry=entry, exit=exitp,
+                                     ret_pips=(entry-exitp)/pv - spread_pips,
+                                     retest_index=ri, retest_hit=rh))
         elif signal_mode == "リテスト指値(水平線)":
-            K = int(retest_wait_k)
+            K = int(retest_wait_k_arg)
             for lv in levels:
-                up_break = (c > lv + break_buffer) and (l1 <= lv)
-                dn_break = (c < lv - break_buffer) and (h1 >= lv)
+                up_break = (c > lv + break_buffer_arg) and (l1 <= lv)
+                dn_break = (c < lv - break_buffer_arg) and (h1 >= lv)
                 if up_break:
                     for j in range(i+1, min(i+K, len(df)-fwd_n)):
                         if abs(float(df["close"].iloc[j]) - lv) <= touch_buffer:
