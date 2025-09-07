@@ -165,24 +165,20 @@ def main():
     if ds.empty:
         raise RuntimeError("データセットが空。期間/足/バッファ/Nを見直してください。")
 
-    Xcols = ["touches","near","atr_norm","sess_tokyo","sess_london","sess_ny","dir"]
-    X = ds[Xcols].values
-    y = ds["y"].values
+        # 予測確率のヒストグラムを保存
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.hist(p_all, bins=20, alpha=0.7)
+        plt.title("predict_proba histogram")
+        plt.xlabel("Probability")
+        plt.ylabel("Count")
+        plt.savefig("reports/predict_proba_hist.png")
+        plt.close()
 
-    tscv = TimeSeriesSplit(n_splits=5)
-    aucs=[]
-    for tr, va in tscv.split(X):
-        model = LogisticRegression(max_iter=200, solver="lbfgs")
-        model.fit(X[tr], y[tr])
-        p = model.predict_proba(X[va])[:,1]
-        aucs.append(roc_auc_score(y[va], p))
-    print(f"CV AUC: {np.mean(aucs):.3f} ± {np.std(aucs):.3f}")
+        # モデルのfeature_name_とXcolsの一致をassert
+        if hasattr(cal_model, 'feature_name_'):
+            assert set(cal_model.feature_name_) == set(Xcols), f"feature_name_とXcolsが一致しません: {cal_model.feature_name_} vs {Xcols}"
 
-    model = LogisticRegression(max_iter=200, solver="lbfgs")
-    model.fit(X, y)
-    joblib.dump({"model":model, "Xcols":Xcols, "meta":{"symbol":SYMBOL,"interval":INTERVAL}}, "models/line_model.joblib")
-    print("saved -> models/line_model.joblib")
-    print(f"samples={len(ds)}, positives={int(ds['y'].sum())}")
 
 if __name__ == "__main__":
     main()

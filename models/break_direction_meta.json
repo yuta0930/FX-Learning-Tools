@@ -1,0 +1,62 @@
+{
+  "horizon_bars": 12,
+  "buffer_ratio": 0.0005,
+  "symbol": "USDJPY=X",
+  "interval": "15m",
+  "period": "60d",
+  "start_ts": "2025-06-09 10:15:00+01:00",
+  "end_ts": "2025-08-29 19:00:00+01:00",
+  "train_rows": 5613,
+  "class_balance": {
+    "pos": null,
+    "neg": null
+  },
+  "cv": {
+    "kind": "PurgedWalkForward",
+    "n_splits": 5,
+    "embargo": 12
+  },
+  "OOF": {
+    "AUC": null,
+    "AP": 0.3638258493286537,
+    "Brier": 0.24150936624684546
+  },
+  "threshold": 0.6212626262626263,
+  "coverage_at_threshold": 0.014759358288770053,
+  "ev_per_trade_at_threshold": 0.3043558667696987,
+  "ev_cfg": {
+    "rr": 1.0,
+    "cost_ratio": 0.02
+  },
+  "model": {
+    "class": "NoneType",
+    "features": [
+      "ret_1",
+      "ret_4",
+      "atr",
+      "touch_density",
+      "slope_long",
+      "tokyo",
+      "london",
+      "ny",
+      "ret_1",
+      "ret_4",
+      "atr",
+      "touch_density",
+      "slope_long",
+      "tokyo",
+      "london",
+      "ny"
+    ],
+    "calibrated": true,
+    "calibration_method": "isotonic",
+    "model_hash": null
+  },
+  "random_state": 42,
+  "code_hash": "842de0f5683db23c8bcf0862107df123e10495f6734348c59b72813c73ce342c",
+  "trained_at": 1756879041,
+  "trained_at_iso": "2025-09-03T05:57:21.328711+00:00",
+  "ev": null,
+  "up_summary": null,
+  "down_summary": null
+}

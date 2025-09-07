@@ -1,0 +1,210 @@
+{
+  "start_ts": "2025-06-09 22:15:00+01:00",
+  "end_ts": "2025-08-29 22:00:00+01:00",
+  "rows": 5577,
+  "class_balance": {
+    "pos": 1807,
+    "neg": 3770
+  },
+  "OOF": {
+    "AP_macro": 0.39407426799827394,
+    "Brier_macro": 0.22330424705108842
+  },
+  "threshold": 0.585,
+  "coverage_at_threshold": 0.05092343553882015,
+  "ev_per_trade_at_threshold": 0.29405091748395884,
+  "ev_per_trade": 0.29405091748395884,
+  "ev_cfg": {
+    "R_win": 1.0,
+    "R_loss": 1.0,
+    "cost_per_trade": 0.15
+  },
+  "features": [
+    "ret_1",
+    "ret_4",
+    "atr",
+    "touch_density",
+    "slope_long",
+    "tokyo",
+    "london",
+    "ny",
+    "ret_8",
+    "ret_12",
+    "atr14_norm",
+    "atr_ratio",
+    "d_atr14",
+    "range_pct",
+    "body_ratio",
+    "wick_up_ratio",
+    "wick_dn_ratio",
+    "slope_short_6",
+    "z_close_20",
+    "sin_hour",
+    "cos_hour",
+    "touch_x_atr",
+    "slope_long_x_ny",
+    "ret_1_v",
+    "ret_4_v",
+    "ret_8_v",
+    "ret_12_v",
+    "range_pct_v",
+    "slope_short_6_v",
+    "atr14_norm_v",
+    "atr_ratio_56",
+    "rv20",
+    "reg_atr_low",
+    "reg_atr_mid",
+    "reg_atr_high",
+    "tokyo_x_range",
+    "tokyo_x_touch",
+    "london_x_range",
+    "london_x_touch",
+    "ny_x_range",
+    "ny_x_touch",
+    "touch_x_atr_v",
+    "touch_x_slope_v",
+    "z_x_atr_v",
+    "reg_low_x_z",
+    "reg_low_x_slope_v",
+    "reg_mid_x_z",
+    "reg_mid_x_slope_v",
+    "reg_high_x_z",
+    "reg_high_x_slope_v",
+    "z_close_20_sq",
+    "slope_short_6_v_sq",
+    "ret_8_v_sq",
+    "ret_12_v_sq",
+    "dir",
+    "dir_sign",
+    "dist_to_level",
+    "atr_slope_dir",
+    "rsi_div_dir",
+    "high_low_ratio_20",
+    "atr_change_10"
+  ],
+  "cv": {
+    "kind": "PurgedWalkForward",
+    "n_splits": 5,
+    "embargo": 1
+  },
+  "random_state": 42,
+  "trained_at": 1757168391,
+  "trained_at_iso": "2025-09-06T14:19:51.098341+00:00",
+  "ev_cost_sensitivity": {
+    "0.02": {
+      "theta": 0.9247191011235955,
+      "trades": 2,
+      "ev_per_trade": 0.8328631687821977,
+      "coverage": 0.00035861574323112785,
+      "avg_p": 0.9264315843910989
+    },
+    "0.03": {
+      "theta": 0.9247191011235955,
+      "trades": 2,
+      "ev_per_trade": 0.8228631687821977,
+      "coverage": 0.00035861574323112785,
+      "avg_p": 0.9264315843910989
+    },
+    "0.04": {
+      "theta": 0.9247191011235955,
+      "trades": 2,
+      "ev_per_trade": 0.8128631687821977,
+      "coverage": 0.00035861574323112785,
+      "avg_p": 0.9264315843910989
+    }
+  },
+  "theta_by_session": {
+    "Tokyo": {
+      "theta": 0.74,
+      "trades": 43,
+      "ev_per_trade": 0.6000433450290712,
+      "coverage": 0.03036723163841808,
+      "avg_p": 0.8750216725145358
+    },
+    "London": {
+      "theta": 0.6649999999999999,
+      "trades": 92,
+      "ev_per_trade": 0.3618984802864136,
+      "coverage": 0.05108273181565797,
+      "avg_p": 0.7559492401432071
+    },
+    "NY": {
+      "theta": 0.7549999999999999,
+      "trades": 2,
+      "ev_per_trade": 0.3712447866196539,
+      "coverage": 0.0012779552715654952,
+      "avg_p": 0.760622393309827
+    }
+  },
+  "theta_by_session_regime": {
+    "Tokyo": {
+      "low": {
+        "theta": 0.9199999999999999,
+        "trades": 2,
+        "ev_per_trade": 0.6935582719818607,
+        "coverage": 0.0034965034965034965,
+        "avg_p": 0.9217791359909304
+      },
+      "mid": {
+        "theta": 0.58,
+        "trades": 22,
+        "ev_per_trade": 0.5246361354082806,
+        "coverage": 0.05188679245283019,
+        "avg_p": 0.8373180677041403
+      },
+      "high": {
+        "theta": 0.6349999999999999,
+        "trades": 21,
+        "ev_per_trade": 0.38495087226665203,
+        "coverage": 0.05,
+        "avg_p": 0.7674754361333261
+      }
+    },
+    "London": {
+      "low": {
+        "theta": 0.59,
+        "trades": 27,
+        "ev_per_trade": 0.15131533662546667,
+        "coverage": 0.05018587360594796,
+        "avg_p": 0.6506576683127333
+      },
+      "mid": {
+        "theta": 0.6749999999999999,
+        "trades": 37,
+        "ev_per_trade": 0.5079900481046687,
+        "coverage": 0.05196629213483146,
+        "avg_p": 0.8289950240523344
+      },
+      "high": {
+        "theta": 0.6349999999999999,
+        "trades": 56,
+        "ev_per_trade": 0.24773974694345327,
+        "coverage": 0.10163339382940109,
+        "avg_p": 0.6988698734717266
+      }
+    },
+    "NY": {
+      "low": {
+        "theta": 0.61,
+        "trades": 1,
+        "ev_per_trade": 0.09866499774676254,
+        "coverage": 0.0040650406504065045,
+        "avg_p": 0.6243324988733813
+      },
+      "mid": {
+        "theta": 0.6449999999999999,
+        "trades": 1,
+        "ev_per_trade": 0.20325545015231797,
+        "coverage": 0.0018796992481203006,
+        "avg_p": 0.676627725076159
+      },
+      "high": {
+        "theta": 0.5599999999999999,
+        "trades": 41,
+        "ev_per_trade": 0.10514540461989082,
+        "coverage": 0.052096569250317665,
+        "avg_p": 0.6275727023099454
+      }
+    }
+  }
+}
