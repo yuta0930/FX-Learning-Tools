@@ -529,32 +529,15 @@ def clamp_period_for_interval(period: str, interval: str) -> str:
 # ======== APIキー読込（.env / secrets 両対応）========
 @st.cache_resource(show_spinner=False)
 def _load_openai_client():
-    api_key = None
-
-    # 1) Streamlit Secrets
-    try:
-        if "OPENAI_API_KEY" in st.secrets:
-            api_key = st.secrets["OPENAI_API_KEY"]
-    except Exception:
-        pass
-
-    # 2) .env / 環境変数
-    if not api_key:
-        load_dotenv()
-        api_key = os.getenv("OPENAI_API_KEY")
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
-        st.error("OpenAI API Key が見つかりません。`secrets.toml` か `.env` を設定してください。")
+        st.error("OpenAI API Key が見つかりません。`.env` を設定してください。")
         st.stop()
 
-    # モデル名は secrets / env で上書き可能。未設定なら安全デフォルト。
-    model = None
-    try:
-        model = st.secrets.get("OPENAI_MODEL", None)
-    except Exception:
-        pass
-    if not model:
-        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    # モデル名は.envで上書き可能。未設定なら安全デフォルト。
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     client = OpenAI(api_key=api_key)
     return client, model
@@ -669,7 +652,7 @@ def ask_copilot(app_state: dict, user_question: str) -> str:
     raw = None
     ans = ""
     error_msg = None
-    model_used = st.secrets.get("OPENAI_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_OAI_MODEL))
+    model_used = os.getenv("OPENAI_MODEL", DEFAULT_OAI_MODEL)
 
     try:
         raw = client.responses.create(
