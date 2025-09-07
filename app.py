@@ -537,7 +537,7 @@ def _load_openai_client():
         st.stop()
 
     # モデル名は.envで上書き可能。未設定なら安全デフォルト。
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
 
     client = OpenAI(api_key=api_key)
     return client, model
@@ -662,10 +662,15 @@ def ask_copilot(app_state: dict, user_question: str) -> str:
                 {"role": "user", "content": f"APP_STATE_JSON:\n{json.dumps(app_state, ensure_ascii=False)}"},
                 {"role": "user", "content": f"QUESTION:\n{user_question or '(空)'}"},
             ],
-            max_output_tokens=800,
+            max_output_tokens=2000,
         )
         ans = _extract_text_from_responses(raw).strip()
+        # デバッグ用: レスポンス内容を表示（expanderのネスト回避）
+        st.markdown("### APIレスポンス詳細")
+        st.write(raw)
         if not ans:
+            st.error("AI応答が空でした。APIレスポンス内容を確認してください。")
+            st.write("APIレスポンス:", raw)
             raise RuntimeError("AI応答が空でした（output_text / output / choices からテキスト取得不可）。")
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
