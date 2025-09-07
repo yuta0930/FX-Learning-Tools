@@ -714,32 +714,6 @@ with st.sidebar.expander("🤖 コパイロット（gpt-5-mini）", expanded=Fal
                 app_state = collect_state_for_ai()
                 ans = ask_copilot(app_state, user_q)
                 st.session_state["copilot_answer"] = ans  # ← 状態に保存
-    st.markdown("---")
-    st.subheader("トレード描画ツール")
-    if "trade_points" not in st.session_state:
-        st.session_state["trade_points"] = []
-    # ボタン群
-    if st.button("買いポイント描画"):
-        # 最新足のcloseを基準
-        price = float(df["close"].iloc[-1])
-        atr_val = float(atr(df).iloc[-1])
-        tp = price + atr_val * 1.5
-        sl = price - atr_val * 1.0
-        st.session_state["trade_points"].append({"type": "buy", "price": price, "tp": tp, "sl": sl, "time": df.index[-1]})
-    if st.button("売りポイント描画"):
-        price = float(df["close"].iloc[-1])
-        atr_val = float(atr(df).iloc[-1])
-        tp = price - atr_val * 1.5
-        sl = price + atr_val * 1.0
-        st.session_state["trade_points"].append({"type": "sell", "price": price, "tp": tp, "sl": sl, "time": df.index[-1]})
-    if st.button("利確ライン描画"):
-        if st.session_state["trade_points"]:
-            last = st.session_state["trade_points"][-1]
-            st.session_state["trade_points"].append({"type": "tp", "price": last["tp"], "time": last["time"]})
-    if st.button("損切りライン描画"):
-        if st.session_state["trade_points"]:
-            last = st.session_state["trade_points"][-1]
-            st.session_state["trade_points"].append({"type": "sl", "price": last["sl"], "time": last["time"]})
 
 # ======== メインエリアで“直近の回答”を表示 ========
 if st.session_state.get("copilot_answer"):
