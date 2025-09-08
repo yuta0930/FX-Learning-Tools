@@ -1313,18 +1313,30 @@ def is_suppressed(ts: pd.Timestamp, windows_df: pd.DataFrame) -> bool:
     return bool(((windows_df["start"] <= ts) & (ts <= windows_df["end"])).any())
 
 def add_news_shading_to_fig(fig: go.Figure, windows_df: pd.DataFrame) -> go.Figure:
-    if windows_df.empty: return fig
+    if windows_df.empty:
+        st.warning("赤影ウィンドウが空です。CSV内容・重要度しきい値・日時型をご確認ください。")
+        return fig
     color_map = {5:"rgba(255,0,0,0.18)", 4:"rgba(255,0,0,0.12)", 3:"rgba(255,0,0,0.08)"}
-    shapes = list(fig.layout.shapes) if fig.layout.shapes else []
+    # x軸型に合わせてタイムゾーン統一
+    idx_tz = None
+    if hasattr(fig, 'data') and len(fig.data) > 0 and hasattr(fig.data[0], 'x'):
+        idx = fig.data[0].x
+        if hasattr(idx, 'tz'):
+            idx_tz = idx.tz
     for _, r in windows_df.iterrows():
         col = color_map.get(int(r["importance"]), "rgba(255,0,0,0.08)")
-        shapes.append(dict(type="rect", xref="x", x0=r["start"], x1=r["end"],
-                           yref="paper", y0=0, y1=1, fillcolor=col, line=dict(width=0), layer="below"))
-
+        x0 = r["start"]
+        x1 = r["end"]
+        # タイムゾーン統一
+        if idx_tz and hasattr(x0, 'tz_convert'):
+            x0 = x0.tz_convert(idx_tz)
+            x1 = x1.tz_convert(idx_tz)
+        fig.add_shape(type="rect", xref="x", x0=x0, x1=x1,
+                      yref="paper", y0=0, y1=1, fillcolor=col, line=dict(width=0), layer="below")
     fig.update_layout(
-        dragmode="pan",                # デフォルトを「パン」に
-        xaxis=dict(rangeslider=dict(visible=False)),  # 下の小さなレンジスライダーを消す
-        yaxis=dict(fixedrange=False),  # 縦方向もズーム可能に
+        dragmode="pan",
+        xaxis=dict(rangeslider=dict(visible=False)),
+        yaxis=dict(fixedrange=False),
     )
     return fig
 
@@ -2930,16 +2942,18 @@ if 'rect_df' in locals():
         fig.add_hline(y=r["target"], line_dash="dot", annotation_text="target")
 
 def _draw_rectangle(fig, p: Pattern):
-    sub = df.loc[p.params["sub_start"] : p.params["sub_end"]]
-    up = p.params["upper"]; dn = p.params["lower"]
+    params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
+    sub = df.loc[params["sub_start"] : params["sub_end"]]
+    up = params["upper"]; dn = params["lower"]
     fig.add_hrect(y0=dn, y1=up, x0=sub.index[0], x1=sub.index[-1],
                   line_width=0, fillcolor="rgba(67,160,71,0.12)")
     fig.add_hline(y=up, line=dict(color=COLOR_RECTANGLE, width=2, dash="dot"))
     fig.add_hline(y=dn, line=dict(color=COLOR_RECTANGLE, width=2, dash="dot"))
 
 def _draw_double(fig, p: Pattern):
-    if p.kind=="double_top":
-        top = p.params["top"]; neck = p.params["neck"]
+    params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
+    if (p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None))=="double_top":
+        top = params["top"]; neck = params["neck"]
         x1 = p.t_start; x2 = p.t_end
         # 2つの高値を線で結ぶ
         fig.add_trace(go.Scatter(x=[x1, x2], y=[top, top], mode="lines+markers+text",
@@ -2951,8 +2965,8 @@ def _draw_double(fig, p: Pattern):
                                  line=dict(color=COLOR_DOUBLE_TOP, width=2, dash="dot"), showlegend=False))
         # ネックライン注釈
         fig.add_annotation(x=x1, y=neck, text="NeckL", showarrow=True, arrowhead=1, ax=0, ay=30, font=dict(color=COLOR_DOUBLE_TOP))
-    elif p.kind=="double_bottom":
-        bot = p.params["bottom"]; neck = p.params["neck"]
+    elif (p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None))=="double_bottom":
+        bot = params["bottom"]; neck = params["neck"]
         x1 = p.t_start; x2 = p.t_end
         # 2つの安値を線で結ぶ
         fig.add_trace(go.Scatter(x=[x1, x2], y=[bot, bot], mode="lines+markers+text",
@@ -2979,16 +2993,17 @@ def _draw_flag(fig, p: Pattern):
                              line=dict(color=COLOR_FLAG, width=2, dash="dot"), showlegend=False))
 
 def _draw_hs(fig, p: Pattern):
-    neck = p.params.get("neck", None)
+    params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
+    neck = params.get("neck", None)
     if neck is not None:
         fig.add_hline(y=float(neck), line=dict(color=COLOR_HS, width=2, dash="dash"))
     # 左肩・頭・右肩の位置にマーカーとラベルを追加
-    left_shoulder_x = p.params.get("left_shoulder_x")
-    left_shoulder_y = p.params.get("left_shoulder_y")
-    head_x = p.params.get("head_x")
-    head_y = p.params.get("head")
-    right_shoulder_x = p.params.get("right_shoulder_x")
-    right_shoulder_y = p.params.get("right_shoulder_y")
+    left_shoulder_x = params.get("left_shoulder_x")
+    left_shoulder_y = params.get("left_shoulder_y")
+    head_x = params.get("head_x")
+    head_y = params.get("head")
+    right_shoulder_x = params.get("right_shoulder_x")
+    right_shoulder_y = params.get("right_shoulder_y")
     # マーカー描画（値が存在する場合のみ）
     if left_shoulder_x is not None and left_shoulder_y is not None:
         fig.add_trace(go.Scatter(x=[left_shoulder_x], y=[left_shoulder_y], mode="markers+text",
@@ -3003,8 +3018,8 @@ def _draw_hs(fig, p: Pattern):
             marker=dict(color=COLOR_HS, size=12, symbol="circle"),
             text=["右肩"], textposition="top center", showlegend=False))
     # パターン名注釈
-    fig.add_annotation(x=p.t_end, y=p.params.get("head", float(df['close'].iloc[-1])),
-                       text=("H&S" if p.kind=="head_shoulders" else "Inv H&S"),
+    fig.add_annotation(x=(p.get('t_end') if isinstance(p, dict) else getattr(p, 't_end', None)), y=params.get("head", float(df['close'].iloc[-1])),
+                       text=("H&S" if (p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None))=="head_shoulders" else "Inv H&S"),
                        showarrow=False, font=dict(color=COLOR_HS))
 
 for p in patterns:
@@ -3037,24 +3052,25 @@ ghost_sims = st.sidebar.slider("ランダムウォーク本数（任意）", 0, 
 def _pattern_levels_for_prob(df, p: Pattern):
     upper_level = None; lower_level = None
     kind = p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None)
+    params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
     if kind and kind.startswith("triangle"):
-        subp = df.loc[p.params["sub_start"]:p.params["sub_end"]]
-        m1,b1 = p.params["upper"]; m2,b2 = p.params["lower"]
+        subp = df.loc[params["sub_start"]:params["sub_end"]]
+        m1,b1 = params["upper"]; m2,b2 = params["lower"]
         x_now  = len(subp)-1
         y_u = float(m1*x_now + b1); y_l = float(m2*x_now + b2)
         upper_level, lower_level = y_u, y_l
     elif kind=="rectangle":
-        upper_level, lower_level = float(p.params["upper"]), float(p.params["lower"])
+        upper_level, lower_level = float(params["upper"]), float(params["lower"])
     elif kind=="double_top":
-        upper_level, lower_level = None, float(p.params["neck"])
+        upper_level, lower_level = None, float(params["neck"])
     elif kind=="double_bottom":
-        upper_level, lower_level = float(p.params["neck"]), None
+        upper_level, lower_level = float(params["neck"]), None
     elif kind in ("flag_up","flag_dn","pennant"):
-        upper_level, lower_level = float(p.params["upper_now"]), float(p.params["lower_now"])
+        upper_level, lower_level = float(params["upper_now"]), float(params["lower_now"])
     elif kind=="head_shoulders":
-        upper_level, lower_level = None, float(p.params["neck"])
+        upper_level, lower_level = None, float(params["neck"])
     elif kind=="inverse_head_shoulders":
-        upper_level, lower_level = float(p.params["neck"]), None
+        upper_level, lower_level = float(params["neck"]), None
 
     return upper_level, lower_level
 
