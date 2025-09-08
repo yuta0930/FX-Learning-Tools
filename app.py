@@ -2489,6 +2489,7 @@ patterns = []
 try:
     double_patterns = []
     tri_df = None
+    rect_df = None
     if enable_tri:
         tri_df = detect_triangles_df(
             df,
@@ -2505,6 +2506,22 @@ try:
         )
         tri_df = tri_df[tri_df["quality_score"] >= 0.55].reset_index(drop=True)
         tri_df = tri_df.replace({None: np.nan})
+    if enable_rect:
+        rect_df = detect_rectangles_df(
+            df,
+            high_col="high", low_col="low", close_col="close",
+            atr_window=14,
+            win_min_bars=10,
+            win_max_bars=rect_lookback if 'rect_lookback' in locals() else 36,
+            pivot_lb=2,
+            pivot_ub=2,
+            flat_tol_norm=0.0009,
+            drift_tol_norm=0.0007,
+            width_max_atr=3.5,
+            width_stability_max=0.28,
+        )
+        rect_df = rect_df[rect_df["quality_score"] >= 0.55].reset_index(drop=True)
+        rect_df = rect_df.replace({None: np.nan})
 
         tol_atrK=0.55,
         min_sep_bars=10,
@@ -2549,8 +2566,20 @@ if 'double_patterns' in locals() and double_patterns:
 # フラッグ/ペナント
 
 
+import re
 if patterns:
-    all_patterns_df = pd.DataFrame(patterns)
+    # Patternオブジェクトを辞書化し、他はそのまま
+    patterns_dicts = []
+    for p in patterns:
+        if isinstance(p, re.Pattern):
+            patterns_dicts.append({"pattern": p.pattern, "flags": p.flags})
+        elif hasattr(p, "keys"):
+            patterns_dicts.append(dict(p))
+        elif hasattr(p, "__dict__"):
+            patterns_dicts.append(vars(p))
+        else:
+            patterns_dicts.append({"value": str(p)})
+    all_patterns_df = pd.DataFrame(patterns_dicts)
     st.dataframe(all_patterns_df.style.format({
         "width_mean":"{:.3f}", "width_std":"{:.3f}", "width_stability":"{:.2f}",
         "quality_score":"{:.2f}",
