@@ -94,20 +94,23 @@ def detect_flags_pennants(
 
     for i in range(atr_window + pole_max_bars + cons_min_bars, n):
         pole_end = i - cons_min_bars
-        pole_start_candidates = range(max(atr_window, pole_end - pole_max_bars), pole_end)
-
-        best_pole = None  # (start, end, dir, atr_units, score)
-        for s in pole_start_candidates:
-            price_move = close[pole_end] - close[s]
-            atr_units = abs(price_move) / (atr[pole_end] + 1e-12)
-            if atr_units >= pole_min_atr:
-                d = "bull" if price_move > 0 else "bear"
-                score = atr_units / max(1, pole_end - s)
-                if best_pole is None or score > best_pole[-1]:
-                    best_pole = (s, pole_end, d, atr_units, score)
-        if best_pole is None:
+        pole_start_min = max(atr_window, pole_end - pole_max_bars)
+        pole_start_max = pole_end
+        if pole_start_max <= pole_start_min:
             continue
-
+        pole_start_candidates = np.arange(pole_start_min, pole_start_max)
+        price_moves = close[pole_end] - close[pole_start_candidates]
+        atr_units = np.abs(price_moves) / (atr[pole_end] + 1e-12)
+        valid = atr_units >= pole_min_atr
+        if not np.any(valid):
+            continue
+        scores = atr_units / np.maximum(1, pole_end - pole_start_candidates)
+        best_idx = np.argmax(scores * valid)
+        s = pole_start_candidates[best_idx]
+        price_move = price_moves[best_idx]
+        atr_unit = atr_units[best_idx]
+        d = "bull" if price_move > 0 else "bear"
+        best_pole = (s, pole_end, d, atr_unit, scores[best_idx])
         pole_s, pole_e, pole_dir, pole_atr_units, _ = best_pole
 
         cons_s = pole_e + 1

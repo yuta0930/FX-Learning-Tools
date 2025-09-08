@@ -2344,7 +2344,17 @@ def detect_head_shoulders(
                     "confirmed": bool(confirmed),
                     "confirm_ts": c_lab,
                     "retested": bool(retested),
-                    "retest_ts": r_lab
+                    "retest_ts": r_lab,
+                    "left_shoulder_x": s1,
+                    "left_shoulder_y": float(v1),
+                    "head_x": h,
+                    "head_y": float(vh),
+                    "right_shoulder_x": s2,
+                    "right_shoulder_y": float(v2),
+                    "neck_left_x": s1,
+                    "neck_left_y": float(y1),
+                    "neck_right_x": s2,
+                    "neck_right_y": float(y2),
                 },
                 quality=q,
                 direction_bias="down"
@@ -2410,7 +2420,17 @@ def detect_head_shoulders(
                     "confirmed": bool(confirmed),
                     "confirm_ts": c_lab,
                     "retested": bool(retested),
-                    "retest_ts": r_lab
+                    "retest_ts": r_lab,
+                    "left_shoulder_x": s1,
+                    "left_shoulder_y": float(v1),
+                    "head_x": h,
+                    "head_y": float(vh),
+                    "right_shoulder_x": s2,
+                    "right_shoulder_y": float(v2),
+                    "neck_left_x": s1,
+                    "neck_left_y": float(y1),
+                    "neck_right_x": s2,
+                    "neck_right_y": float(y2),
                 },
                 quality=q,
                 direction_bias="up"
@@ -2439,10 +2459,17 @@ def measured_targets(p: Pattern):
         pole = float(params.get("pole_abs", 0.0))
         return dict(up=+pole, down=-pole)
     if kind in ("head_shoulders","inverse_head_shoulders"):
-        neck = float(params.get("neck", 0.0))
-        head = float(params.get("head", 0.0))
-        h = abs(head - neck)
-        return dict(up=+h, down=-h)
+        neck = params.get("neck")
+        head = params.get("head")
+        if neck is None or head is None:
+            return dict(up=0.0, down=0.0)
+        try:
+            neck = float(neck)
+            head = float(head)
+            h = abs(head - neck)
+            return dict(up=+h, down=-h)
+        except Exception:
+            return dict(up=0.0, down=0.0)
     return dict(up=0.0, down=0.0)
 
 # ---- パターン検出設定（サイドバー）----
@@ -2566,24 +2593,47 @@ if 'double_patterns' in locals() and double_patterns:
 # フラッグ/ペナント
 
 
+
 import re
+import pandas as pd
+
+# ---- すべてのチャートパターン表を結合して表示 ----
+pattern_tables = []
+if 'rect_df' in locals() and rect_df is not None and not rect_df.empty:
+    pattern_tables.append(rect_df)
+if 'tri_df' in locals() and tri_df is not None and not tri_df.empty:
+    pattern_tables.append(tri_df)
+if 'double_patterns' in locals() and double_patterns:
+    double_df = pd.DataFrame(double_patterns)
+    if not double_df.empty:
+        pattern_tables.append(double_df)
+
+# patternsリスト（ヘッド＆ショルダーズ、フラッグ/ペナント等）も表に追加
 if patterns:
-    # Patternオブジェクトを辞書化し、他はそのまま
     patterns_dicts = []
     for p in patterns:
         if isinstance(p, re.Pattern):
-            patterns_dicts.append({"pattern": p.pattern, "flags": p.flags})
+            d = {"pattern": p.pattern, "flags": p.flags}
         elif hasattr(p, "keys"):
-            patterns_dicts.append(dict(p))
+            d = dict(p)
         elif hasattr(p, "__dict__"):
-            patterns_dicts.append(vars(p))
+            d = vars(p)
         else:
-            patterns_dicts.append({"value": str(p)})
-    all_patterns_df = pd.DataFrame(patterns_dicts)
+            d = {"value": str(p)}
+        mt = measured_targets(p)
+        d['dn'] = mt.get('down', 0.0)
+        patterns_dicts.append(d)
+    patterns_df = pd.DataFrame(patterns_dicts)
+    if not patterns_df.empty:
+        pattern_tables.append(patterns_df)
+
+if pattern_tables:
+    all_patterns_df = pd.concat(pattern_tables, ignore_index=True, sort=False)
     st.dataframe(all_patterns_df.style.format({
         "width_mean":"{:.3f}", "width_std":"{:.3f}", "width_stability":"{:.2f}",
-        "quality_score":"{:.2f}",
+        "quality_score":"{:.2f}", "quality":"{:.2f}",
         "entry":"{:.3f}", "stop":"{:.3f}", "target":"{:.3f}",
+        "dn":"{:.3f}",
     }, na_rep="-"))
 
 # ---- すべてのチャートパターン表を結合して表示 ----
@@ -3026,13 +3076,17 @@ def _draw_hs(fig, p: Pattern):
     neck = params.get("neck", None)
     if neck is not None:
         fig.add_hline(y=float(neck), line=dict(color=COLOR_HS, width=2, dash="dash"))
-    # 左肩・頭・右肩の位置にマーカーとラベルを追加
+    # 左肩・頭・右肩・ネック両端の位置にマーカーとラベルを追加
     left_shoulder_x = params.get("left_shoulder_x")
     left_shoulder_y = params.get("left_shoulder_y")
     head_x = params.get("head_x")
-    head_y = params.get("head")
+    head_y = params.get("head_y")
     right_shoulder_x = params.get("right_shoulder_x")
     right_shoulder_y = params.get("right_shoulder_y")
+    neck_left_x = params.get("neck_left_x")
+    neck_left_y = params.get("neck_left_y")
+    neck_right_x = params.get("neck_right_x")
+    neck_right_y = params.get("neck_right_y")
     # マーカー描画（値が存在する場合のみ）
     if left_shoulder_x is not None and left_shoulder_y is not None:
         fig.add_trace(go.Scatter(x=[left_shoulder_x], y=[left_shoulder_y], mode="markers+text",
@@ -3046,6 +3100,15 @@ def _draw_hs(fig, p: Pattern):
         fig.add_trace(go.Scatter(x=[right_shoulder_x], y=[right_shoulder_y], mode="markers+text",
             marker=dict(color=COLOR_HS, size=12, symbol="circle"),
             text=["右肩"], textposition="top center", showlegend=False))
+    # ネック両端
+    if neck_left_x is not None and neck_left_y is not None:
+        fig.add_trace(go.Scatter(x=[neck_left_x], y=[neck_left_y], mode="markers+text",
+            marker=dict(color=COLOR_HS, size=10, symbol="triangle-up"),
+            text=["ネック左端"], textposition="bottom center", showlegend=False))
+    if neck_right_x is not None and neck_right_y is not None:
+        fig.add_trace(go.Scatter(x=[neck_right_x], y=[neck_right_y], mode="markers+text",
+            marker=dict(color=COLOR_HS, size=10, symbol="triangle-up"),
+            text=["ネック右端"], textposition="bottom center", showlegend=False))
     # パターン名注釈
     fig.add_annotation(x=(p.get('t_end') if isinstance(p, dict) else getattr(p, 't_end', None)), y=params.get("head", float(df['close'].iloc[-1])),
                        text=("H&S" if (p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None))=="head_shoulders" else "Inv H&S"),
@@ -3164,6 +3227,7 @@ if enable_ghost:
 
             model, use_cols, meta = _load_model_and_meta()
             upper_level, lower_level = _pattern_levels_for_prob(df, pat)
+            lower_level = lower_level if lower_level is not None else 0.0
             ts_now = df.index[-1]
             try:
                 in_news = bool(is_in_any_window(pd.Series([ts_now]), windows_df[["start","end"]]).iloc[0])
@@ -3226,6 +3290,9 @@ if enable_ghost:
         freq = inferred if inferred else "T"
         future_idx = pd.date_range(idx0, periods=ghost_h+1, freq=freq, tz=idx0.tz)
 
+        # Noneやnanの場合は0.0で埋める
+        P_dn = P_dn if P_dn is not None and not np.isnan(P_dn) else 0.0
+        EV_dn = EV_dn if 'EV_dn' in locals() and EV_dn is not None and not np.isnan(EV_dn) else 0.0
         if ghost_mode == "EV直線":
             xs, y = _ghost_path_ev(df, P_up, P_dn, tgt_up_px, tgt_dn_px, ghost_h)
             fig.add_trace(go.Scatter(
