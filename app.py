@@ -2984,8 +2984,9 @@ def _line_points(i1, i2, slope, intercept):
     ys = slope * xs + intercept
     return xs.astype(int), ys
 
-if 'tri_df' in locals():
-    for _, r in tri_df.iterrows():
+if 'tri_df' in locals() and tri_df is not None and not tri_df.empty:
+    tri_df_sorted = tri_df.sort_values("quality_score", ascending=False).head(10)
+    for _, r in tri_df_sorted.iterrows():
         s, e = int(r["start_idx"]), int(r["end_idx"])
         xs_u, ys_u = _line_points(s, e, r["upper_slope"], r["upper_intercept"])
         xs_l, ys_l = _line_points(s, e, r["lower_slope"], r["lower_intercept"])
@@ -3003,20 +3004,22 @@ if 'rect_df' in locals():
         ys = slope * xs + intercept
         return xs.astype(int), ys
 
-    for _, r in rect_df.iterrows():
-        s, e = int(r["start_idx"]), int(r["end_idx"])
-        xs_u, ys_u = _line_points(s, e, r["upper_slope"], r["upper_intercept"])
-        xs_l, ys_l = _line_points(s, e, r["lower_slope"], r["lower_intercept"])
+    if rect_df is not None:
+        rect_df_sorted = rect_df.sort_values("quality_score", ascending=False).head(10)
+        for _, r in rect_df_sorted.iterrows():
+            s, e = int(r["start_idx"]), int(r["end_idx"])
+            xs_u, ys_u = _line_points(s, e, r["upper_slope"], r["upper_intercept"])
+            xs_l, ys_l = _line_points(s, e, r["lower_slope"], r["lower_intercept"])
 
-        x_u = df.index[xs_u] if "time" not in df.columns else df["time"].iloc[xs_u]
-        x_l = df.index[xs_l] if "time" not in df.columns else df["time"].iloc[xs_l]
+            x_u = df.index[xs_u] if "time" not in df.columns else df["time"].iloc[xs_u]
+            x_l = df.index[xs_l] if "time" not in df.columns else df["time"].iloc[xs_l]
 
-        fig.add_scatter(x=x_u, y=ys_u, mode="lines", name=f"rect upper (q={r['quality_score']:.2f})", opacity=0.7)
-        fig.add_scatter(x=x_l, y=ys_l, mode="lines", name="rect lower", opacity=0.7)
+            fig.add_scatter(x=x_u, y=ys_u, mode="lines", name=f"rect upper (q={r['quality_score']:.2f})", opacity=0.7)
+            fig.add_scatter(x=x_l, y=ys_l, mode="lines", name="rect lower", opacity=0.7)
 
-        fig.add_hline(y=r["entry"],  line_dash="dot", annotation_text="entry")
-        fig.add_hline(y=r["stop"],   line_dash="dot", annotation_text="stop")
-        fig.add_hline(y=r["target"], line_dash="dot", annotation_text="target")
+            fig.add_hline(y=r["entry"],  line_dash="dot", annotation_text="entry")
+            fig.add_hline(y=r["stop"],   line_dash="dot", annotation_text="stop")
+            fig.add_hline(y=r["target"], line_dash="dot", annotation_text="target")
 
 def _draw_rectangle(fig, p: Pattern):
     params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
@@ -3112,7 +3115,8 @@ def _draw_hs(fig, p: Pattern):
                        text=("H&S" if (p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None))=="head_shoulders" else "Inv H&S"),
                        showarrow=False, font=dict(color=COLOR_HS))
 
-for p in patterns:
+patterns_sorted = sorted(patterns, key=lambda p: getattr(p, 'quality', 0), reverse=True)[:10]
+for p in patterns_sorted:
     kind = p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None)
     # トライアングルはtri_dfで描画済みなのでここでは描画しない
     if kind=="rectangle":
