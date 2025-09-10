@@ -2277,7 +2277,17 @@ def detect_head_shoulders(
         return float(((x-xm)*(y-ym)).sum()/den)
 
     # ========= 1) トップ型（H&S） =========
-    hs = piv_high.index.intersection(idx).sort_values()
+    # ピボット点の間引き（近接点除外）
+    def thin_pivots(piv_idx, min_dist=5):
+        thinned = []
+        last = None
+        for t in piv_idx:
+            if last is None or abs(idx_pos[t] - idx_pos[last]) >= min_dist:
+                thinned.append(t)
+                last = t
+        return pd.Index(thinned)
+
+    hs = thin_pivots(piv_high.index.intersection(idx).sort_values(), min_dist=5)
     if len(hs) >= 3:
         for k in range(len(hs)-2):
             s1, h, s2 = hs[k], hs[k+1], hs[k+2]
@@ -2286,51 +2296,35 @@ def detect_head_shoulders(
 
             v1, vh, v2 = float(df.loc[s1,"high"]), float(df.loc[h,"high"]), float(df.loc[s2,"high"])
 
-            # 肩同値：価格比(tol*vh) または ATR基準(shoulder_tol_atr*a14_med) の緩い方で判定
             same_shoulder_ok = abs(v1 - v2) <= max(tol*max(vh,1e-9), shoulder_tol_atr*a14_med)
-            # ヘッドの突出（肩より高い）
             head_margin_ok   = vh >= max(v1, v2) + head_margin_atr*a14_med
             if not (same_shoulder_ok and head_margin_ok):
                 continue
 
-            # 左右谷の特定（ネックの2点）
             left_valley  = float(df.loc[s1:h, "low"].min())
             right_valley = float(df.loc[h:s2, "low"].min())
             x1, y1 = idx_pos[s1], left_valley
             x2, y2 = idx_pos[s2], right_valley
             m_neck, b_neck = _lin_neck(x1, y1, x2, y2)
 
-            # 確定（終値でのネック割れ 連続confirm_bars）
             confirmed, c_lab = _confirm_break(side="down", i_start_label=s2)
-
-            # リテスト
             retested, r_lab = _retest_after(c_lab if confirmed else s2, retest_within, retest_tol_atr, side="down")
-
-            # 事前トレンド（左肩直前まで）
             sl = _pretrend_slope(s1, pretrend_win)
             pretrend_ok = (sl > float(pretrend_min))
-
-            # 深さ（ヘッド−ネック中心）のATR比
             neck_center = (y1 + y2) * 0.5
             depth_z = max(0.0, (vh - neck_center) / max(1e-9, a14_med))
-
-            # 時間対称（肩間隔）
             gapL = idx_pos[h]  - idx_pos[s1]
             gapR = idx_pos[s2] - idx_pos[h]
             time_sym = 1.0 - abs(gapL - gapR) / max(1.0, max(gapL, gapR))
-
-            # ネック傾きが急すぎる場合は減点
             neck_slope_penalty = min(12.0, abs(m_neck) / max(1e-9, a14_med) * 6.0)
-
-            # 品質スコア（0–99）
             q = 45.0
-            q += 20.0 * max(0.0, 1.0 - abs(v1 - v2) / max(1e-6, max(v1,v2)))   # 肩同値
-            q += min(18.0, 6.0 * max(0.0, depth_z - 0.5))                      # 深さ
-            q += 8.0 if confirmed else (2.0 if allow_incomplete else 0.0)      # 確定
-            q += 6.0 if retested  else 0.0                                      # リテスト
-            q += 5.0 if pretrend_ok else 0.0                                    # 事前トレンド
-            q += 5.0 * max(0.0, time_sym)                                       # 時間対称
-            q -= neck_slope_penalty                                             # 斜め過ぎ減点
+            q += 20.0 * max(0.0, 1.0 - abs(v1 - v2) / max(1e-6, max(v1,v2)))
+            q += min(18.0, 6.0 * max(0.0, depth_z - 0.5))
+            q += 8.0 if confirmed else (2.0 if allow_incomplete else 0.0)
+            q += 6.0 if retested  else 0.0
+            q += 5.0 if pretrend_ok else 0.0
+            q += 5.0 * max(0.0, time_sym)
+            q -= neck_slope_penalty
             q = float(max(0.0, min(99.0, q)))
 
             out.append(Pattern(
@@ -2340,7 +2334,7 @@ def detect_head_shoulders(
                     "head": float(vh),
                     "left": float(v1),
                     "right": float(v2),
-                    "neck": float(neck_center),       # 互換用（平均）
+                    "neck": float(neck_center),
                     "neck_left": float(y1),
                     "neck_right": float(y2),
                     "neck_m": float(m_neck),
