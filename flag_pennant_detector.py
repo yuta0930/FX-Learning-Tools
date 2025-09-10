@@ -75,6 +75,8 @@ def detect_flags_pennants(
     contraction_min: float = 0.75,
     breakout_buffer_atr: float = 0.30,
     require_breakout: bool = False,
+    r2_min: float = 0.15,
+    quality_min: float = 0.55,
 ):
     if any(c not in df.columns for c in [high_col, low_col, close_col]):
         raise ValueError("DataFrame must have high/low/close columns")
@@ -134,12 +136,18 @@ def detect_flags_pennants(
         hi_idx = idxs[is_h[cons_s:cons_e+1]]
         lo_idx = idxs[is_l[cons_s:cons_e+1]]
 
-        if len(hi_idx) < 2 or len(lo_idx) < 2:
-            k = min(4, len(idxs))
-            top_hi_idx = idxs[np.argsort(highs[cons_s:cons_e+1])[-k:]] if k > 1 else np.array([], dtype=int)
-            top_lo_idx = idxs[np.argsort(lows[cons_s:cons_e+1])[:k]]  if k > 1 else np.array([], dtype=int)
-            hi_idx = np.sort(top_hi_idx)
-            lo_idx = np.sort(top_lo_idx)
+        # ---最低3点以上に厳格化---
+        min_pivot_points = 3
+        if len(hi_idx) < min_pivot_points or len(lo_idx) < min_pivot_points:
+            k = min(6, len(idxs))
+            if k < min_pivot_points:
+                continue
+            top_hi_idx = idxs[np.argsort(highs[cons_s:cons_e+1])[-k:]]
+            top_lo_idx = idxs[np.argsort(lows[cons_s:cons_e+1])[:k]]
+            hi_idx = np.sort(top_hi_idx[:max(min_pivot_points, len(top_hi_idx)//2)])
+            lo_idx = np.sort(top_lo_idx[:max(min_pivot_points, len(top_lo_idx)//2)])
+        if len(hi_idx) < min_pivot_points or len(lo_idx) < min_pivot_points:
+            continue
 
         uh_slope, uh_inter, uh_r2 = _fit_line(hi_idx, highs[hi_idx])
         lh_slope, lh_inter, lh_r2 = _fit_line(lo_idx, lows[lo_idx])
@@ -148,6 +156,9 @@ def detect_flags_pennants(
         uh_slope_n = _normalized_slope(uh_slope, price_scale)
         lh_slope_n = _normalized_slope(lh_slope, price_scale)
 
+        # R²フィルタ追加
+        if (uh_r2 + lh_r2)/2.0 < r2_min:
+            continue
         if abs(uh_slope_n) > slope_abs_max_norm or abs(lh_slope_n) > slope_abs_max_norm:
             continue
 
@@ -181,24 +192,30 @@ def detect_flags_pennants(
             if lows[cons_e] <= trigger:
                 breakout_idx = cons_e
 
+        # 品質スコアの重みを調整（ピボット数・収束・フィット重視）
         q_pole = min(pole_atr_units / 5.0, 1.0)
         q_fit  = max(min((uh_r2 + lh_r2) / 2.0, 1.0), 0.0)
         sym = 1.0 - (abs(abs(uh_slope_n) - abs(lh_slope_n)) / max(abs(uh_slope_n), abs(lh_slope_n), 1e-9))
         contr_ratio = atr_cons / (atr_pole + 1e-12)
         q_contr = min(1.0, max(0.0, (1.0 - contr_ratio) / (1.0 - contraction_min + 1e-9)))
-        quality = float(np.clip(0.35*q_pole + 0.35*q_fit + 0.2*sym + 0.1*q_contr, 0, 1))
+        touch_score = min(len(hi_idx), len(lo_idx))
+        q_touch = min(1.0, (touch_score-2)/3.0)
+        quality = float(np.clip(0.30*q_pole + 0.30*q_fit + 0.15*sym + 0.15*q_contr + 0.10*q_touch, 0, 1))
+        # 品質スコア閾値追加
+        if quality < quality_min:
+            continue
 
-        pole_height = abs(close[pole_e] - close[pole_s])
-        if pole_dir == "bull":
-            entry  = max(trigger, upper_y_end)
-            stop   = lower_y_end - 0.25*atr[cons_e]
-            target = entry + pole_height
-        else:
-            entry  = min(trigger, lower_y_end)
-            stop   = upper_y_end + 0.25*atr[cons_e]
-            target = entry - pole_height
+    pole_height = abs(close[pole_e] - close[pole_s])
+    if pole_dir == "bull":
+        entry  = max(trigger, upper_y_end)
+        stop   = lower_y_end - 0.25*atr[cons_e]
+        target = entry + pole_height
+    else:
+        entry  = min(trigger, lower_y_end)
+        stop   = upper_y_end + 0.25*atr[cons_e]
+        target = entry - pole_height
 
-        patterns.append({
+    patterns.append({
             "kind": pattern_type,
             "dir": pole_dir,
             "start_idx": int(cons_s),
