@@ -1510,6 +1510,7 @@ def detect_triangles(
     for e in range(atr_window + cons_min_bars, n, e_step):
         best = None  # (quality, dict)
         # 複数長さで探索し、最良だけ採用
+        min_pivot_points = 3
         for cons_len in range(cons_min_bars, cons_max_bars+1, len_step):
             s = e - cons_len + 1
             if s < atr_window:
@@ -1528,14 +1529,16 @@ def detect_triangles(
             lo_idx = idxs[is_l[s:e+1]]
 
             # ピボットが足りない場合は極値で補完
-            if len(hi_idx) < 2 or len(lo_idx) < 2:
-                k = min(4, len(idxs))
-                if k < 2:
+            if len(hi_idx) < min_pivot_points or len(lo_idx) < min_pivot_points:
+                k = min(6, len(idxs))
+                if k < min_pivot_points:
                     continue
                 top_hi_idx = idxs[np.argsort(highs[s:e+1])[-k:]]
                 top_lo_idx = idxs[np.argsort(lows[s:e+1])[:k]]
-                hi_idx = np.sort(top_hi_idx[:max(2, len(top_hi_idx)//2)])
-                lo_idx = np.sort(top_lo_idx[:max(2, len(top_lo_idx)//2)])
+                hi_idx = np.sort(top_hi_idx[:max(min_pivot_points, len(top_hi_idx)//2)])
+                lo_idx = np.sort(top_lo_idx[:max(min_pivot_points, len(top_lo_idx)//2)])
+            if len(hi_idx) < min_pivot_points or len(lo_idx) < min_pivot_points:
+                continue
 
             uh_slope, uh_inter, uh_r2 = _fit_line(hi_idx, highs[hi_idx])
             lh_slope, lh_inter, lh_r2 = _fit_line(lo_idx, lows[lo_idx])
@@ -1562,21 +1565,19 @@ def detect_triangles(
             if converge < converge_min:
                 continue
 
-            # 型判定
+            # 型判定（閾値パラメータ化）
             tri_type = None
-            # 上昇三角
-            if abs(uh_n) <= flat_tol_norm and lh_n > flat_tol_norm:
+            flat_thr = flat_tol_norm
+            parallel_thr = parallel_tol
+            if abs(uh_n) <= flat_thr and lh_n > flat_thr:
                 tri_type = "ascending_triangle"
-            # 下降三角
-            elif abs(lh_n) <= flat_tol_norm and uh_n < -flat_tol_norm:
+            elif abs(lh_n) <= flat_thr and uh_n < -flat_thr:
                 tri_type = "descending_triangle"
             else:
-                # シンメトリカル
                 if np.sign(uh_n) != np.sign(lh_n) and np.sign(uh_n)!=0 and np.sign(lh_n)!=0:
                     rel = abs(abs(uh_n) - abs(lh_n)) / max(abs(uh_n), abs(lh_n), 1e-9)
-                    if rel <= parallel_tol:
+                    if rel <= parallel_thr:
                         tri_type = "sym_triangle"
-
             if tri_type is None:
                 continue
 
@@ -1627,15 +1628,17 @@ def detect_triangles(
                 stop  = lo_e - 0.25*atr[e] if expect == "up" else up_e + 0.25*atr[e]
                 target= entry + height if expect == "up" else entry - height
 
-            # 品質スコア（0–1）
+            # 品質スコア（タッチ数・収束率重視）
             fit_q   = max(0.0, min(1.0, (uh_r2 + lh_r2)/2.0))
             conv_q  = max(0.0, min(1.0, (converge - converge_min) / max(1e-9, 1.0 - converge_min)))
-            flat_q  = 1.0 - min(1.0, abs(uh_n)/flat_tol_norm) if tri_type=="ascending_triangle" else \
-                      1.0 - min(1.0, abs(lh_n)/flat_tol_norm) if tri_type=="descending_triangle" else \
+            flat_q  = 1.0 - min(1.0, abs(uh_n)/flat_thr) if tri_type=="ascending_triangle" else \
+                      1.0 - min(1.0, abs(lh_n)/flat_thr) if tri_type=="descending_triangle" else \
                       1.0 - min(1.0, abs(abs(uh_n)-abs(lh_n))/max(abs(uh_n),abs(lh_n),1e-9))
-            touch_q = min(1.0, (len(hi_idx)>=3) * 0.5 + (len(lo_idx)>=3) * 0.5)
+            # タッチ数で加点（最低3点以上で0.5、5点以上で1.0）
+            touch_score = min(len(hi_idx), len(lo_idx))
+            touch_q = min(1.0, (touch_score-2)/3.0)
             pre_q   = pre_bias
-            quality = float(np.clip(0.35*fit_q + 0.30*conv_q + 0.15*flat_q + 0.10*touch_q + 0.10*pre_q, 0, 1))
+            quality = float(np.clip(0.25*fit_q + 0.35*conv_q + 0.15*flat_q + 0.15*touch_q + 0.10*pre_q, 0, 1))
 
             pat = {
                 "type": tri_type,
@@ -1656,6 +1659,7 @@ def detect_triangles(
                 "target": float(target),
             }
 
+            # require_breakoutの挙動明確化
             if require_breakout and breakout_idx is None:
                 continue
 
