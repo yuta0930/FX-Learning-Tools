@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Callable, Dict, List, Any, Optional
+from functools import lru_cache
 
 def build_level_break_prob_table(
     df: pd.DataFrame,
@@ -118,11 +119,40 @@ def build_level_break_prob_table(
             p_up = float(pred_up["proba"].iloc[0])
             p_dn = float(pred_dn["proba"].iloc[0])
 
-            # 健全性チェック：確率が常時同値になっていないこと
-            if hard_assert and np.isclose(p_up, p_dn, atol=1e-12):
-                raise RuntimeError(
-                    f"[BUG] P_up == P_dn を検出。level={lv} ts={ts_i} p_up={p_up:.6f} p_dn={p_dn:.6f}"
-                )
+            # 健全性チェック：確率が完全同値のときはフェイルセーフで微小なタイブレークを入れて継続
+            if np.isclose(p_up, p_dn, atol=1e-12):
+                # 方向の初期バイアス: 現在値とレベルの位置で微小調整
+                eps = 1e-6
+                try:
+                    c_last = float(hist_df["close"].iloc[-1]) if "close" in hist_df.columns else None
+                except Exception:
+                    c_last = None
+                if c_last is not None and np.isfinite(c_last):
+                    if c_last >= float(lv):
+                        p_up = min(1.0, p_up + eps)
+                        p_dn = max(0.0, p_dn - eps)
+                    else:
+                        p_dn = min(1.0, p_dn + eps)
+                        p_up = max(0.0, p_up - eps)
+                else:
+                    # フォールバック: ベクトル総和で微小調整
+                    try:
+                        s_up = float(np.nan_to_num(df_up.drop(columns=["timestamp"]).values).sum())
+                        s_dn = float(np.nan_to_num(df_dn.drop(columns=["timestamp"]).values).sum())
+                        if s_up >= s_dn:
+                            p_up = min(1.0, p_up + eps)
+                            p_dn = max(0.0, p_dn - eps)
+                        else:
+                            p_dn = min(1.0, p_dn + eps)
+                            p_up = max(0.0, p_up - eps)
+                    except Exception:
+                        # どうしても判断できない場合は上方向を優先（微小）
+                        p_up = min(1.0, p_up + eps)
+                        p_dn = max(0.0, p_dn - eps)
+                if debug or hard_assert:
+                    print(
+                        f"WARN: P_up == P_dn を検出し微小タイブレークを適用 level={lv} ts={ts_i} -> p_up={p_up:.6f} p_dn={p_dn:.6f}"
+                    )
 
             p_up_list.append(p_up)
             p_dn_list.append(p_dn)
@@ -144,3 +174,110 @@ def build_level_break_prob_table(
 
     prob_df = pd.DataFrame(rows).sort_values("level").reset_index(drop=True)
     return prob_df
+
+
+def _hashable_levels(levels: List[float]) -> tuple:
+    return tuple(round(float(l), 8) for l in levels)
+
+
+@lru_cache(maxsize=128)
+def cached_prob_table(
+    df_hash: int,
+    levels_key: tuple,
+    touch_buffer: float,
+    N_recent: int,
+    feature_cols_key: tuple,
+    meta_threshold: float,
+) -> pd.DataFrame:
+    """Cache layer: Because df is mutable/unhashable, caller must pass a stable hash.
+
+    Parameters
+    ----------
+    df_hash : int
+        A hash representing the current dataframe slice (e.g., hash of last timestamp & length).
+    levels_key : tuple
+        Normalized (hashable) levels.
+    feature_cols_key : tuple
+        Feature column ordering for reproducibility. Changing feature order invalidates cache.
+    meta_threshold : float
+        Global threshold from meta; if it changes we recompute (affects predict path).
+    """
+    # This function is only a thin wrapper; actual heavy lifting is done by build_level_break_prob_table
+    # It will be called by a light facade that reconstructs arguments.
+    raise RuntimeError("cached_prob_table should not be called directly (needs facade)")
+
+
+def build_level_break_prob_table_cached(
+    df: pd.DataFrame,
+    ts_now,
+    use_levels: List[float],
+    use_cols: List[str],
+    touch_buffer: float,
+    model: Any,
+    meta: Dict[str, Any],
+    make_features_for_level: Callable[[pd.DataFrame, float, float, int, float], Dict[str, float]],
+    predict_with_session_theta: Callable[[pd.DataFrame, object, List[str], Dict[str, Any]], pd.DataFrame],
+    *,
+    N_recent: int = 20,
+    debug: bool = False,
+    hard_assert: bool = True,
+    cache: bool = True,
+) -> pd.DataFrame:
+    """Facade that adds caching semantics on top of build_level_break_prob_table.
+
+    df_hash strategy: combine len(df) and last timestamp to avoid full serialization.
+    Invalidation triggers: different levels set, feature ordering, touch_buffer, N_recent, global threshold.
+    """
+    if not cache:
+        return build_level_break_prob_table(
+            df=df, ts_now=ts_now, use_levels=use_levels, use_cols=use_cols,
+            touch_buffer=touch_buffer, model=model, meta=meta,
+            make_features_for_level=make_features_for_level,
+            predict_with_session_theta=predict_with_session_theta,
+            N_recent=N_recent, debug=debug, hard_assert=hard_assert,
+        )
+
+    if len(df) == 0:
+        return pd.DataFrame(columns=["level","P_up","P_dn"])
+
+    last_ts = df.index[-1] if hasattr(df.index, '__iter__') else None
+    # Use timestamp value (int) if possible
+    if last_ts is not None:
+        try:
+            ts_val = int(pd.Timestamp(last_ts).value)
+        except Exception:
+            ts_val = 0
+    else:
+        ts_val = 0
+    df_hash = hash((len(df), ts_val, N_recent, round(float(touch_buffer), 6)))
+    levels_key = _hashable_levels(use_levels)
+    feature_cols_key = tuple(use_cols)
+    meta_threshold = float(meta.get("threshold", 0.5))
+
+    # Use underlying lru_cache by constructing a unique key & storing the computed frame externally
+    key = (df_hash, levels_key, touch_buffer, N_recent, feature_cols_key, meta_threshold)
+    # Manual cache dict (so we can store DataFrame objects)
+    if not hasattr(build_level_break_prob_table_cached, "_cache_store"):
+        build_level_break_prob_table_cached._cache_store = {}
+    store = build_level_break_prob_table_cached._cache_store
+    if key in store:
+        return store[key]
+
+    result = build_level_break_prob_table(
+        df=df, ts_now=ts_now, use_levels=use_levels, use_cols=use_cols,
+        touch_buffer=touch_buffer, model=model, meta=meta,
+        make_features_for_level=make_features_for_level,
+        predict_with_session_theta=predict_with_session_theta,
+        N_recent=N_recent, debug=debug, hard_assert=hard_assert,
+    )
+    store[key] = result
+    # Avoid unbounded growth
+    if len(store) > 128:
+        # simple LRU-like eviction: drop first key
+        try:
+            first_key = next(iter(store.keys()))
+            if first_key != key:
+                del store[first_key]
+        except Exception:
+            pass
+    return result

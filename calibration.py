@@ -129,8 +129,4 @@ def calibration_report(y_true: np.ndarray, proba: np.ndarray, *,
     save_calibration_png(cal, title, out_png)
     save_calibration_json(cal, meta or {}, out_json)
     return {"png": out_png, "json": out_json, "brier": cal.brier, "ece": cal.ece, "counts": cal.counts}
-    out_png = os.path.join(out_dir, f"{stem}.png")
-    out_json= os.path.join(out_dir, f"{stem}.json")
-    save_calibration_png(cal, title, out_png)
-    save_calibration_json(cal, meta or {}, out_json)
-    return {"png": out_png, "json": out_json, "brier": cal.brier, "ece": cal.ece, "counts": cal.counts}
+    # NOTE: 上記 return 以降に重複した同一処理が存在していたため削除しました（到達不能コード）。

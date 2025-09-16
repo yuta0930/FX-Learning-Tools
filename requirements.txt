@@ -55,3 +55,7 @@ websockets==15.0.1
 yfinance==0.2.65
 python-dotenv==1.1.1
 openai
+pytest==8.3.3
+ruff==0.6.9
+black==24.8.0
+PyYAML==6.0.2

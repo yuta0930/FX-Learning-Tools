@@ -2,9 +2,21 @@
 import numpy as np
 import pandas as pd
 import joblib
+import sys
+from model_wrappers import TemperatureScaledModel as _TempModel  # ensure module is importable for pickle
 import json
 
 def load_break_model(model_path="models/break_model.joblib"):
+    """Load trained model with backward-compat for legacy pickles.
+
+    Ensures that references to __main__._TemperatureScaledModel can be resolved
+    by exposing model_wrappers.TemperatureScaledModel under that name.
+    """
+    # Back-compat shim: expose symbol for legacy pickles
+    # This lets pickle find __main__._TemperatureScaledModel at load time
+    main_mod = sys.modules.get("__main__")
+    if main_mod is not None and not hasattr(main_mod, "_TemperatureScaledModel"):
+        setattr(main_mod, "_TemperatureScaledModel", _TempModel)
     pkg = joblib.load(model_path)
     model = pkg["model"]
     use_cols = pkg.get("use_cols") or pkg.get("Xcols")  # 互換

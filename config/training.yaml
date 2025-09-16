@@ -1,0 +1,46 @@
+quality:
+  ap_min_multiplier: 1.15   # AP >= max(pos_ratio * multiplier, ap_min_floor)
+  ap_min_floor: 0.02        # 絶対的な最低AP
+  brier_max: 0.30           # Brier上限
+  coverage_warn_min: 0.01   # 閾値での coverage がこれ未満なら警告
+
+threshold_search:
+  min_cov: 0.05             # θ探索 共通デフォルト最小カバレッジ
+  target_cov: 0.10          # 目標カバレッジ（バランス最適化）
+  session_min_cov_default: 0.05
+  session_target_cov_default: 0.10
+  session_tokyo_min_cov: 0.03
+  session_tokyo_target_cov: 0.07
+
+cost_sensitivity:
+  costs: [0.02, 0.03, 0.04]
+
+monitoring:
+  drift_min_samples: 200    # PSI等計算に必要な最小サンプル
+
+calibration:
+  enable_isotonic: true      # Isotonic calibration candidate
+  enable_temperature: true   # Temperature scaling candidate
+  temp_T_min: 0.5
+  temp_T_max: 3.0
+  temp_T_steps: 40           # grid points for T search
+  recent_frac_list: [0.3, 0.4, 0.5]  # recent fraction candidates (like existing)
+
+paths:
+  model: models/break_model.joblib
+  meta: models/break_meta.json
+  calibration: reports/break_calibration.json
+  history: reports/model_history.csv
+
+risk_guard:
+  max_trades_per_day: 40          # 1日全体の最大発注数（BUY+SELL合算）
+  max_trades_per_session: 20      # セッション毎の最大発注数
+  max_consecutive_losses: 6       # 連敗でクールダウン突入
+  cooldown_minutes: 60            # クールダウン期間（分）
+  atr_spike_window: 20            # ATR急変監視のローリング窓
+  atr_spike_zscore: 3.0           # Zスコアがこの値を超えたら新規停止
+  daily_reset_hour_utc: 0         # 日次カウンタをUTC何時でリセットするか
+  enable_atr_guard: true          # ATR急変停止を有効化
+  enable_session_limits: true     # セッションごとの発注上限を適用
+  enable_cooldown: true           # 連敗クールダウン機能
+  atr_period: 14                  # ATR計算期間（ローリング14本）

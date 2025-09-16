@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Ensure optional deps for formatting/lint/test are present
+
+      - name: Ruff Lint
+        run: |
+          ruff check .
+
+      - name: Ruff Format (diff only)
+        run: |
+          ruff format --check .
+
+      - name: Black Format (diff only)
+        run: |
+          black --check . || (
+            echo '::error::Black formatting issues detected. Run "black ." locally.' && exit 1
+          )
+
+      - name: Run PyTest
+        env:
+          PYTHONWARNINGS: always
+        run: |
+          pytest -q --maxfail=1
+
+      - name: Upload Ruff/pytest artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            ./*.log
+            **/pytest-*.xml
+            **/.ruff_cache
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit safety
+      - name: Dependency Vulnerability Audit (pip-audit)
+        run: |
+          pip-audit -r requirements.txt || true
+      - name: Safety Check
+        run: |
+          safety check -r requirements.txt || true

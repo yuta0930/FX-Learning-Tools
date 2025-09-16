@@ -32,6 +32,54 @@ def psi_severity(psi: float) -> str:
     if psi < 0.25: return "WARN"
     return "DRIFT"
 
+# ====== 1b) 追加ドリフト指標 (KL / Jensen-Shannon / Hellinger) ======
+def _discretize_pair(baseline: np.ndarray, current: np.ndarray, *, edges: Optional[np.ndarray] = None,
+                     n_bins: int = 10) -> Tuple[np.ndarray, np.ndarray]:
+    if edges is None:
+        edges = _hist_bins_from_probs(baseline, n_bins=n_bins)
+    b = np.histogram(baseline, bins=edges)[0].astype(float)
+    c = np.histogram(current,  bins=edges)[0].astype(float)
+    # smoothing
+    if b.sum() == 0: b += 1.0
+    if c.sum() == 0: c += 1.0
+    b /= b.sum(); c /= c.sum()
+    return b, c
+
+def kl_divergence(baseline: np.ndarray, current: np.ndarray, *, edges: Optional[np.ndarray] = None) -> float:
+    b, c = _discretize_pair(baseline, current, edges=edges)
+    eps = 1e-9
+    return float(np.sum(b * np.log((b + eps) / (c + eps))))
+
+def jensen_shannon(baseline: np.ndarray, current: np.ndarray, *, edges: Optional[np.ndarray] = None) -> float:
+    b, c = _discretize_pair(baseline, current, edges=edges)
+    m = 0.5 * (b + c)
+    eps = 1e-9
+    kl1 = np.sum(b * np.log((b + eps) / (m + eps)))
+    kl2 = np.sum(c * np.log((c + eps) / (m + eps)))
+    js = 0.5 * (kl1 + kl2)
+    return float(js)
+
+def hellinger_distance(baseline: np.ndarray, current: np.ndarray, *, edges: Optional[np.ndarray] = None) -> float:
+    b, c = _discretize_pair(baseline, current, edges=edges)
+    return float(np.sqrt(0.5 * np.sum((np.sqrt(b) - np.sqrt(c)) ** 2)))
+
+def drift_summary(baseline: np.ndarray, current: np.ndarray) -> Dict[str, float]:
+    """複数指標を一括計算して dict 返却。baseline/current が十分な長さを持たない場合は NaN。
+    返却: {psi, kl, js, hellinger}
+    """
+    if baseline is None or current is None or len(baseline) < 5 or len(current) < 5:
+        return {k: float('nan') for k in ("psi","kl","js","hellinger")}
+    try:
+        psi_val, edges = compute_psi(baseline, current)
+        return {
+            "psi": psi_val,
+            "kl": kl_divergence(baseline, current, edges=edges),
+            "js": jensen_shannon(baseline, current, edges=edges),
+            "hellinger": hellinger_distance(baseline, current, edges=edges)
+        }
+    except Exception:
+        return {k: float('nan') for k in ("psi","kl","js","hellinger")}
+
 # ====== 2) 直近セッションの「閾値超過率」 ======
 def threshold_exceed_rate(probs: np.ndarray, theta: float) -> float:
     if probs.size == 0: return float("nan")

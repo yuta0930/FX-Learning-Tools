@@ -11,7 +11,9 @@ class EVConfig:
 def ev_for_threshold(proba: np.ndarray, theta: float, ev: EVConfig) -> Dict[str, float]:
     sel = proba >= theta
     if sel.sum() == 0:
-        return {"theta": float(theta), "trades": 0, "ev_per_trade": float("-inf"), "coverage": 0.0, "avg_p": 0.0}
+        # 取引ゼロ件時: 以前は -inf を返していたが、統計的平均が定義不能であることを明示するため NaN に変更
+        # 下流では trades>0 フィルタがあるためロジック破壊にはならない
+        return {"theta": float(theta), "trades": 0, "ev_per_trade": float("nan"), "coverage": 0.0, "avg_p": 0.0}
     p = proba[sel]
     evp = (p * ev.R_win) - ((1.0 - p) * ev.R_loss) - ev.cost_per_trade
     return {

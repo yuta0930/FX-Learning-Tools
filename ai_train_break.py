@@ -30,6 +30,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import CalibratedClassifierCV
+from model_wrappers import TemperatureScaledModel  # 安定提供のラッパー
 from sklearn.model_selection import StratifiedKFold
 
 # ---- project modules ----
@@ -37,6 +38,7 @@ from features_util import augment_features
 from featx import add_volatility_and_interactions
 from purged_cv import PurgedGroupTimeSeriesSplit, make_time_groups, purged_walk_forward_indices
 from ev_utils import EVConfig, ev_for_threshold
+from config.loader import get_config
 from sweep_labels import export_label_audit_samples
 from minority_metrics import summarize_minor_metrics
 from calibration import calibration_report
@@ -158,6 +160,29 @@ def build_model_for_break() -> CalibratedClassifierCV:
     return best_model
 
 
+"""
+注意: 温度スケーリング済み分類器は model_wrappers.TemperatureScaledModel を使用します。
+旧版の _TemperatureScaledModel は廃止し、pickle の互換は model_wrappers 側の
+別名公開(_TemperatureScaledModel)で維持します。
+"""
+
+
+def _search_temperature(p_val: np.ndarray, y_val: np.ndarray, T_min=0.5, T_max=3.0, steps=40):
+    best_T = 1.0
+    best_brier = float('inf')
+    grid = np.linspace(T_min, T_max, steps)
+    eps = 1e-9
+    for T in grid:
+        p = np.clip(p_val, eps, 1 - eps)
+        logit = np.log(p / (1 - p)) / T
+        p_adj = 1 / (1 + np.exp(-logit))
+        brier = sklearn.metrics.brier_score_loss(y_val, p_adj)
+        if brier < best_brier:
+            best_brier = brier
+            best_T = float(T)
+    return best_T, best_brier
+
+
 def fit_with_safe_calibration(Xtr: np.ndarray, ytr: np.ndarray):
     """単一クラスfold回避＆最近側 subset で較正する堅牢版"""
     if len(np.unique(ytr)) < 2:
@@ -180,16 +205,54 @@ def fit_with_safe_calibration(Xtr: np.ndarray, ytr: np.ndarray):
         ])
 
     n = len(Xtr)
-    for frac in [0.3, 0.4, 0.5]:
+    cfg = get_config()
+    recent_fracs = getattr(cfg.calibration, 'recent_frac_list', [0.3, 0.4, 0.5])
+    enable_iso = getattr(cfg.calibration, 'enable_isotonic', True)
+    enable_temp = getattr(cfg.calibration, 'enable_temperature', True)
+    for frac in recent_fracs:
         st = max(0, int(n * (1.0 - frac)))
         X_sub, y_sub = Xtr[st:], ytr[st:]
         if len(y_sub) < 100 or len(np.unique(y_sub)) < 2:
             continue
         try:
             skf = StratifiedKFold(n_splits=3, shuffle=False)
-            calib = CalibratedClassifierCV(_base(), method="sigmoid", cv=skf)
-            calib.fit(X_sub, y_sub)
-            return calib, f"sigmoid_cv3_recent(frac={frac})"
+            # Base reference: sigmoid
+            cand_models = []
+            sig = CalibratedClassifierCV(_base(), method="sigmoid", cv=skf)
+            sig.fit(X_sub, y_sub)
+            p_sig = sig.predict_proba(X_sub)[:, 1]
+            brier_sig = sklearn.metrics.brier_score_loss(y_sub, p_sig)
+            cand_models.append((brier_sig, sig, f"sigmoid(frac={frac})"))
+
+            # Isotonic (if enabled)
+            if enable_iso:
+                try:
+                    iso = CalibratedClassifierCV(_base(), method="isotonic", cv=skf)
+                    iso.fit(X_sub, y_sub)
+                    p_iso = iso.predict_proba(X_sub)[:, 1]
+                    brier_iso = sklearn.metrics.brier_score_loss(y_sub, p_iso)
+                    cand_models.append((brier_iso, iso, f"isotonic(frac={frac})"))
+                except Exception as e:
+                    print(f"[calibration][warn] isotonic failed: {e}")
+
+            # Temperature scaling (if enabled)
+            if enable_temp:
+                try:
+                    base_cls = _base()
+                    base_cls.fit(X_sub, y_sub)
+                    p_base = base_cls.predict_proba(X_sub)[:, 1]
+                    T_min = getattr(cfg.calibration, 'temp_T_min', 0.5)
+                    T_max = getattr(cfg.calibration, 'temp_T_max', 3.0)
+                    T_steps = getattr(cfg.calibration, 'temp_T_steps', 40)
+                    T_star, brier_temp = _search_temperature(p_base, y_sub, T_min, T_max, T_steps)
+                    temp_model = TemperatureScaledModel(base_cls, T=T_star)
+                    cand_models.append((brier_temp, temp_model, f"temp(T={T_star:.2f},frac={frac})"))
+                except Exception as e:
+                    print(f"[calibration][warn] temperature scaling failed: {e}")
+
+            # Pick best (min Brier)
+            brier_best, model_best, label_best = min(cand_models, key=lambda t: t[0])
+            return model_best, label_best
         except Exception as e:
             print(f"[calibration error] {e}")
             pass
@@ -219,13 +282,18 @@ def quick_diagnose(df: pd.DataFrame, Xcols: List[str], y: np.ndarray):
         print(f"[diag] corr failed: {e}")
 
 
-def search_best_theta(proba, ev, min_cov=0.05, target_cov=0.10):
+def search_best_theta(proba, ev, min_cov=None, target_cov=None):
     """
     1) θの下限を損益分岐確率に縛る
     2) 目標カバレッジ >= target_cov の中から EV/tr - λ|cov-target| を最大化
     3) ダメなら min_cov >= の EV/tr 最大
     4) 最後の最後に trades>0 の EV/tr 最大（coverage=0回避）
     """
+    cfg = get_config()
+    if min_cov is None:
+        min_cov = cfg.threshold_search.min_cov
+    if target_cov is None:
+        target_cov = cfg.threshold_search.target_cov
     # --- 1) p_break-even を下限に ---
     p_be = (ev.R_loss + ev.cost_per_trade) / (ev.R_win + ev.R_loss)
     print(f"[θ-guard] break-even p >= {p_be:.3f} -> θ grid starts at ~{max(0.50, p_be-0.02):.3f}")
@@ -268,8 +336,14 @@ def dump_theta_sweep(proba: np.ndarray, ev: EVConfig, label="OOF"):
 
 
 def best_theta_by_session(df: pd.DataFrame, proba: np.ndarray, ev: EVConfig,
-                          min_cov=0.22, target_cov=0.30):
+                          min_cov=None, target_cov=None):
     # セッション列が無ければ時間帯で代替
+    cfg = get_config()
+    # デフォルト値（セッション別用）
+    if min_cov is None:
+        min_cov = cfg.threshold_search.session_min_cov_default
+    if target_cov is None:
+        target_cov = cfg.threshold_search.session_target_cov_default
     if all(c in df.columns for c in ["tokyo", "london", "ny"]):
         masks = {
             "Tokyo": (df["tokyo"] > 0.5).values,
@@ -284,14 +358,17 @@ def best_theta_by_session(df: pd.DataFrame, proba: np.ndarray, ev: EVConfig,
             "NY": ((h >= 22) | (h < 5)).values,
         }
 
-    out = {
-        name: search_best_theta(
-            proba[idx], ev,
-            min_cov=0.05 if name != "Tokyo" else 0.03,
-            target_cov=0.12 if name != "Tokyo" else 0.07
-        )
-        for name, idx in masks.items() if idx.sum() >= 200
-    }
+    out = {}
+    for name, idx in masks.items():
+        if idx.sum() < 200:
+            continue
+        # 東京市場は独自設定（configに存在すれば使用、無ければ fallback）
+        if name == "Tokyo":
+            mc = getattr(cfg.threshold_search, 'session_tokyo_min_cov', min_cov)
+            tc = getattr(cfg.threshold_search, 'session_tokyo_target_cov', target_cov)
+        else:
+            mc, tc = min_cov, target_cov
+        out[name] = search_best_theta(proba[idx], ev, min_cov=mc, target_cov=tc)
     return out
 
 
@@ -367,7 +444,7 @@ def train_eval_wf(df: pd.DataFrame, n_splits: int, embargo_groups: int, ev: EVCo
 
     # θ探索 & OOS評価
     dump_theta_sweep(p_all, ev, label="OOF")
-    theta = search_best_theta(p_all, ev, min_cov=0.05, target_cov=0.10)
+    theta = search_best_theta(p_all, ev)
     print(f"[θ*] picked θ={theta['theta']:.4f} | cov={theta['coverage']:.3f} "
           f"| EV/tr={theta['ev_per_trade']:.3f} | avg_p={theta['avg_p']:.3f}")
 
@@ -566,19 +643,106 @@ def run_training(args):
     y_oos = summary["y_oos"]
 
     df_oof = df
-    theta_by_sess = best_theta_by_session(df_oof, p_all, ev, min_cov=0.05, target_cov=0.10)
-    theta_by_reg = best_theta_by_session_regime(df_oof, p_all, ev, min_cov=0.05, target_cov=0.10)
+    theta_by_sess = best_theta_by_session(df_oof, p_all, ev)
+    theta_by_reg = best_theta_by_session_regime(df_oof, p_all, ev, min_cov=None, target_cov=None)
     summary["theta_by_session"] = theta_by_sess
     summary["theta_by_session_regime"] = theta_by_reg
     print("[θ_by_session]", theta_by_sess)
     print("[θ_by_session_regime]", theta_by_reg)
 
     run_calibration_report(p_all, y_oos, summary["use_cols"], out_dir="reports", stem="break_calibration")
-    ev_cost_sens = sweep_cost_sensitivity(p_all, ev, costs=(0.02, 0.03, 0.04))
+    cfg = get_config()
+    ev_cost_sens = sweep_cost_sensitivity(p_all, ev, costs=tuple(cfg.cost_sensitivity.costs))
     summary["ev_cost_sensitivity"] = ev_cost_sens
+
+    # ============================================================
+    # モデル品質ガード
+    # ------------------------------------------------------------
+    # 目的:
+    #  - クロスバリデーション OOF の Brier / AP が最低基準を満たさない場合に保存を抑止
+    #  - 将来の劣化やデータ異常で性能が崩れた学習成果物の蓄積を防ぐ
+    # チューニング指標:
+    #  - AP (macro) が分類器のランダム基準 (pos比率) を僅かに上回る程度なら却下
+    #  - Brier が 0.30 を超える（確率がほぼ無情報レベル）なら却下
+    #  - trades カバレッジが閾値で極端に低い場合（例: < 0.01）も警告
+    #  - 閾値は暫定。今後メタ内で履歴追跡し動的調整可
+    # ------------------------------------------------------------
+    POS_RATIO = float(np.mean(y_oos))
+    AP_MACRO = summary.get("AP_macro", float("nan"))
+    BRIER_MACRO = summary.get("Brier_macro", float("nan"))
+    BEST_TH = summary.get("best_threshold", {})
+    COV_AT_TH = float(BEST_TH.get("coverage", float("nan")))
+
+    # 動的最低ライン: AP >= max( POS_RATIO * 1.15, 0.02 ) / Brier <= 0.30
+    cfg = get_config()
+    ap_min = max(POS_RATIO * cfg.quality.ap_min_multiplier, cfg.quality.ap_min_floor)
+    brier_max = cfg.quality.brier_max
+    fail_reasons = []
+    if not np.isfinite(AP_MACRO) or AP_MACRO < ap_min:
+        fail_reasons.append(f"AP_macro {AP_MACRO:.4f} < min {ap_min:.4f}")
+    if not np.isfinite(BRIER_MACRO) or BRIER_MACRO > brier_max:
+        fail_reasons.append(f"Brier_macro {BRIER_MACRO:.4f} > max {brier_max:.4f}")
+    if np.isfinite(COV_AT_TH) and COV_AT_TH < cfg.quality.coverage_warn_min:
+        # warning (ただし保存抑止まではしない: 監視で検知可能にする)
+        print(f"[quality][warn] coverage_at_threshold={COV_AT_TH:.4f} (<0.01)")
+
+    def _append_model_history(status: str, reasons: list[str] | None = None):
+        """モデル学習結果を継続的にCSVへ追記する。
+
+        列: time_iso,status,AP_macro,Brier_macro,pos_ratio,threshold,coverage,ev_per_trade,reasons_json
+        * reasons_json: 失敗時のみ理由配列をJSONエンコード、成功時は空文字
+        """
+        import csv, os, json as _json
+        hist_path = os.path.join("reports", "model_history.csv")
+        os.makedirs(os.path.dirname(hist_path), exist_ok=True)
+        row = {
+            "time_iso": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "AP_macro": f"{AP_MACRO:.6f}" if np.isfinite(AP_MACRO) else "nan",
+            "Brier_macro": f"{BRIER_MACRO:.6f}" if np.isfinite(BRIER_MACRO) else "nan",
+            "pos_ratio": f"{POS_RATIO:.6f}",
+            "threshold": f"{BEST_TH.get('theta', float('nan')):.6f}" if BEST_TH else "nan",
+            "coverage": f"{BEST_TH.get('coverage', float('nan')):.6f}" if BEST_TH else "nan",
+            "ev_per_trade": f"{BEST_TH.get('ev_per_trade', float('nan')):.6f}" if BEST_TH else "nan",
+            "reasons_json": _json.dumps(reasons, ensure_ascii=False) if reasons else ""
+        }
+        header = list(row.keys())
+        write_header = not os.path.exists(hist_path)
+        try:
+            with open(hist_path, "a", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=header)
+                if write_header:
+                    w.writeheader()
+                w.writerow(row)
+            print(f"[history] appended -> {hist_path}")
+        except Exception as e:
+            print(f"[history][error] append failed: {e}")
+
+    if fail_reasons:
+        print("[quality][FAIL] 保存をスキップします: " + "; ".join(fail_reasons))
+        # 失敗内容をメタ風 JSON に保存（後段監視用）
+        guard_out = args.meta_out.replace('.json', '_rejected.json')
+        try:
+            with open(guard_out, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "status": "rejected",
+                    "reasons": fail_reasons,
+                    "AP_macro": AP_MACRO,
+                    "Brier_macro": BRIER_MACRO,
+                    "pos_ratio": POS_RATIO,
+                    "threshold": BEST_TH,
+                }, f, ensure_ascii=False, indent=2)
+            print(f"[quality] rejection meta saved -> {guard_out}")
+        except Exception as e:
+            print(f"[quality][error] rejection meta save failed: {e}")
+        _append_model_history("rejected", fail_reasons)
+        return  # 以降の保存処理を行わない
+
+    print("[quality][OK] モデル品質基準を満たしました -> 保存を継続")
 
     save_model(df, summary["use_cols"], args.model_out)
     save_meta(df, ev, {k: summary[k] for k in summary if k != "cv_df"}, args.meta_out)
+    _append_model_history("passed", None)
     print("[done] all artifacts saved.")
 
 def main():

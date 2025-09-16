@@ -1,3 +1,8 @@
+# 先に主要ライブラリを読み込む（上部で使用されるため）
+import numpy as np
+import pandas as pd
+import streamlit as st
+
 # === 共通処理関数 ===
 def update_prob_buffer(prob_df):
     curr_probs = []
@@ -13,52 +18,34 @@ def update_prob_buffer(prob_df):
     return curr_probs
 
 def calc_psi_and_exrate(curr_probs, baseline_probs, theta_up, theta_dn):
+    """PSI + 追加ドリフト指標(KL/JS/Hellinger) と閾値超過率をまとめて計算。
+
+    Returns:
+        psi_val, severity, exceed_rate, kl, js, hellinger
+    """
     psi_val, sev, ex_rate = float('nan'), "n/a", float('nan')
+    kl = js = hell = float('nan')
     if baseline_probs is not None and len(st.session_state.prob_buffer) >= 200:
         curr = np.array(st.session_state.prob_buffer[-1000:], dtype=float)
         try:
-            psi_val, _ = compute_psi(baseline_probs, curr, edges=None)
+            psi_val, edges = compute_psi(baseline_probs, curr, edges=None)
             sev = psi_severity(psi_val)
+            # 共有ビン edges を drift_summary 内で再利用させるため baseline/curr をそのまま渡す
+            from monitoring import drift_summary  # 局所 import (循環回避安全)
+            ds = drift_summary(baseline_probs, curr)
+            kl = ds.get('kl', float('nan'))
+            js = ds.get('js', float('nan'))
+            hell = ds.get('hellinger', float('nan'))
         except Exception as e:
-            print(f"PSI計算エラー: {e}")
+            print(f"ドリフト指標計算エラー: {e}")
         try:
             theta_rep = float(np.median([theta_up, theta_dn]))
             ex_rate = threshold_exceed_rate(np.array(curr_probs, float), theta_rep)
         except Exception as e:
             print(f"θ超過率計算エラー: {e}")
-    return psi_val, sev, ex_rate
-# テスト用: make_features_for_levelの直接呼び出し（ファイル末尾に移動）
-if __name__ == "__main__":
-    import pandas as pd
-    from datetime import datetime
-    # ダミーデータ作成
-    df = pd.DataFrame({
-        "close": [100, 101, 102, 103, 104],
-        "high": [101, 102, 103, 104, 105],
-        "low": [99, 100, 101, 102, 103],
-        "open": [100, 100, 101, 102, 103],
-    }, index=pd.date_range("2025-09-01", periods=5, freq="D"))
-    ts = df.index[-1]
-    level = 102
-    dir_sign = 1
-    touch_buffer = 0.5
-
-# テスト用: make_features_for_levelの直接呼び出し（ファイル末尾に移動）
-if __name__ == "__main__":
-    import pandas as pd
-    from datetime import datetime
-    # ダミーデータ作成
-    df = pd.DataFrame({
-        "close": [100, 101, 102, 103, 104],
-        "high": [101, 102, 103, 104, 105],
-        "low": [99, 100, 101, 102, 103],
-        "open": [100, 100, 101, 102, 103],
-    }, index=pd.date_range("2025-09-01", periods=5, freq="D"))
-    ts = df.index[-1]
-    level = 102
-    dir_sign = 1
-    touch_buffer = 0.5
-from monitoring import compute_psi, psi_severity, threshold_exceed_rate, healthcheck, safe_call
+    return psi_val, sev, ex_rate, kl, js, hell
+# （削除）重複していた __main__ テストブロックは冗長のため整理しました。
+from monitoring import compute_psi, psi_severity, threshold_exceed_rate, healthcheck, safe_call, drift_summary
 ## --- 発注の最終ゲートに enable_trading を反映 ---
 # pred_df, windows_dfが揃ったタイミングで以下を必ず通す
 # pred_df: [timestamp, proba, theta, signal, ...]
@@ -77,29 +64,130 @@ from monitoring import compute_psi, psi_severity, threshold_exceed_rate, healthc
 #     pass  # ここに発注処理を記述
 
 
-import streamlit as st
 from build_level_break_prob_table import build_level_break_prob_table
 st.set_page_config(page_title="FX 自動ライン描画 - 完全版", page_icon="📈", layout="wide")
 from inference_break import load_break_meta
+from config.loader import get_config
+from risk_guard import make_guard_from_config
+import math
 
-# --- ベースライン確率の読み込み（初期化） ---
+# --- ATR 計算ユーティリティ（単純版）---
+def compute_latest_atr(price_df, period: int = 14):
+    try:
+        import pandas as pd  # 局所 import （存在しない場合は上位で失敗しているはず）
+        req = {"high","low","close"}
+        cols_lower = {c.lower() for c in price_df.columns}
+        if not req.issubset(cols_lower):
+            return float('nan')
+        df = price_df.copy()
+        ren = {}
+        for c in df.columns:
+            lc = c.lower()
+            if lc in req:
+                ren[c]=lc
+        if ren:
+            df = df.rename(columns=ren)
+        hl = df['high'] - df['low']
+        pc = df['close'].shift(1)
+        h_pc = (df['high'] - pc).abs()
+        l_pc = (df['low'] - pc).abs()
+        import pandas as _pd
+        tr = _pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+        atr = tr.rolling(period, min_periods=period).mean()
+        val = atr.iloc[-1]
+        return float(val) if np.isfinite(val) else float('nan')
+    except Exception:
+        return float('nan')
+
+# --- ベースライン確率の読み込み（初期化 + 検証関数） ---
 import json
-try:
-    with open("models/break_meta.json", "r", encoding="utf-8") as f:
-        _break_meta = json.load(f)
-    baseline_proba = float(_break_meta.get("baseline_proba", 0.5))
-    # --- ベースライン確率分布（配列）もロード ---
-    with open("reports/break_calibration.json", "r", encoding="utf-8") as f:
-        _calib = json.load(f)
-    baseline_probs = _calib.get("prob_mean", None)
-    if baseline_probs is not None:
-        import numpy as np
-        baseline_probs = np.array(baseline_probs, dtype=float)
-    else:
-        baseline_probs = None
-except Exception:
-    baseline_proba = 0.5  # 読み込み失敗時はデフォルト値
-    baseline_probs = None
+import numpy as np
+from functools import lru_cache
+
+def _load_and_validate_baseline(meta_path: str = "models/break_meta.json",
+                                 calib_path: str = "reports/break_calibration.json",
+                                 *,
+                                 min_samples: int = 5,
+                                 warn_on_clip: bool = True):
+    """ベースライン確率分布を読み込み検証するユーティリティ。
+
+    読み込みソース:
+      1. メタ JSON (`baseline_proba` フィールド: 閾値比較などに使う代表値)
+      2. 較正 JSON (`prob_mean` 配列: 校正カーブ上の代表確率群) -> PSI / drift 監視用の近似分布として利用
+
+    検証ルール:
+      - NaN 削除（比率を警告）
+      - 範囲外値は 0-1 にクリップ（オプション警告）
+      - サンプル数閾値 (min_samples) 未満なら不安定警告し None 扱い
+
+    Returns:
+      (baseline_proba: float, baseline_probs: np.ndarray | None, warnings: list[str])
+
+    実装メモ:
+      - エラーは握りつぶしつつ warning に集約（UI レイヤで st.warning 表示）
+      - 将来的に dataclass 返却へ拡張しやすいようタプル形式を維持
+    """
+    warns: list[str] = []
+    base_p = 0.5
+    probs_arr = None
+    # --- meta 読み込み ---
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta_json = json.load(f)
+        # fallback を 0.5 に固定（バイナリ無情報基準）
+        base_p = float(meta_json.get("baseline_proba", 0.5))
+        if not (0.0 <= base_p <= 1.0):  # 異常値はクリップせず警告し 0.5 に戻す
+            warns.append(f"baseline_proba 異常値={base_p:.4f} -> 0.5 にリセット")
+            base_p = 0.5
+    except FileNotFoundError:
+        warns.append(f"metaファイル未検出: {meta_path}")
+    except json.JSONDecodeError as e:
+        warns.append(f"meta JSON 解析失敗: {e}")
+    except Exception as e:
+        warns.append(f"meta読込失敗: {e}")
+
+    # --- calibration 読み込み ---
+    try:
+        with open(calib_path, "r", encoding="utf-8") as f:
+            calib_json = json.load(f)
+        raw = calib_json.get("prob_mean") or calib_json.get("calibration", {}).get("prob_mean")
+        if raw is not None:
+            probs_arr = np.asarray(raw, dtype=float)
+    except FileNotFoundError:
+        warns.append(f"calibrationファイル未検出: {calib_path}")
+    except json.JSONDecodeError as e:
+        warns.append(f"calibration JSON 解析失敗: {e}")
+    except Exception as e:
+        warns.append(f"calibration読込失敗: {e}")
+
+    # --- 検証 ---
+    if probs_arr is not None:
+        if probs_arr.size == 0:
+            warns.append("baseline_probs が空 -> 利用不可 (PSI skip)")
+            probs_arr = None
+        else:
+            nan_mask = ~np.isfinite(probs_arr)
+            if nan_mask.any():
+                ratio = nan_mask.mean()
+                warns.append(f"baseline_probs NaN/inf {ratio:.1%} -> 除去")
+                probs_arr = probs_arr[~nan_mask]
+            if probs_arr.size == 0:
+                warns.append("baseline_probs 除去後に空 -> 利用不可")
+                probs_arr = None
+            else:
+                if not ((probs_arr >= 0).all() and (probs_arr <= 1).all()):
+                    if warn_on_clip:
+                        warns.append("baseline_probs に 0-1 範囲外 -> クリップ")
+                    probs_arr = np.clip(probs_arr, 0, 1)
+                if probs_arr.size < min_samples:
+                    warns.append(f"baseline_probs サンプル不足 {probs_arr.size} < {min_samples} -> 不使用")
+                    probs_arr = None
+    return base_p, probs_arr, warns
+
+baseline_proba, baseline_probs, _baseline_warns = _load_and_validate_baseline()
+if '_baseline_warns' in globals() and _baseline_warns:
+    for w in _baseline_warns:
+        st.warning(f"[baseline] {w}")
 
 # === 推奨行動（意思決定ポリシー）関連 ===
 from decision_policy import DecisionParams, EVConfig, recommend_action
@@ -113,6 +201,15 @@ if "enable_trading" not in st.session_state:
     except Exception:
         ev = 0.0  # 読み込み失敗＝安全側でOFF
     st.session_state.enable_trading = (ev > 0)
+
+# ---- Risk Guard 初期化（最初の1回だけ） ----
+if "trade_guard" not in st.session_state:
+    try:
+        cfg = get_config().risk_guard
+        st.session_state.trade_guard = make_guard_from_config(cfg)
+    except Exception as e:
+        st.session_state.trade_guard = None
+        st.warning(f"Risk guard 初期化失敗: {e}")
 
 # ---- UI表示：以降はユーザー操作で上書き可能 ----
 col1, col2 = st.columns([1,1])
@@ -128,6 +225,82 @@ with col2:
     except Exception:
         ev = float("nan")
     st.metric("EV per trade", f"{ev:.4f}" if ev == ev else "N/A")  # NaN対応
+with st.sidebar.expander("🛡 Risk Guard", expanded=False):
+    tg = st.session_state.get("trade_guard")
+    if tg is None:
+        st.write("(未初期化)")
+    else:
+        s = tg.state()
+        st.write(f"日次Trades: {s['day_trades']} (max {s['max_day_trades']})")
+        st.write(f"連敗: {s['consecutive_losses']} (limit {s['loss_cooldown_after']})")
+        st.write(f"Cooldown: {'ON' if s['in_cooldown'] else 'OFF'} / 残 {s['cooldown_remaining_min']}m")
+        if s.get('session_trades'):
+            st.write("Session trades:")
+            for k,v in s['session_trades'].items():
+                st.write(f"- {k}: {v} / {s['max_session_trades']}")
+        # 自動ATR計算（dfがあれば）
+        latest_atr_disp = "n/a"
+        _df_candidate = globals().get('df', None)
+        if _df_candidate is not None:
+            try:
+                import pandas as _pd
+                if isinstance(_df_candidate, _pd.DataFrame) and not _df_candidate.empty:
+                    atr_period = s.get('atr_period', 14)
+                    lat = compute_latest_atr(_df_candidate.tail(500), period=int(atr_period))
+                    if np.isfinite(lat):
+                        tg.record_atr(lat)
+                        latest_atr_disp = f"{lat:.5f}"
+            except Exception as e:
+                st.write(f"ATR計算失敗: {e}")
+        st.write(f"最新ATR(period={s.get('atr_period',14)}): {latest_atr_disp}")
+        col_w, col_l = st.columns(2)
+        with col_w:
+            if st.button("Win記録", key="rg_mark_win"):
+                tg.register_trade(result_pips=+1, ts=pd.Timestamp.utcnow(), session=None)
+        with col_l:
+            if st.button("Loss記録", key="rg_mark_loss"):
+                tg.register_trade(result_pips=-1, ts=pd.Timestamp.utcnow(), session=None)
+        s2 = tg.state()
+        st.caption(f"更新後: 日次 {s2['day_trades']} / 連敗 {s2['consecutive_losses']}")
+        # 詳細スナップショット（入れ子のエクスパンダは禁止のためコンテナで表示）
+        with st.container():
+            st.caption("詳細スナップショット")
+            try:
+                if hasattr(tg, 'snapshot') and callable(getattr(tg, 'snapshot')):
+                    snap = tg.snapshot()
+                else:
+                    snap = tg.state()
+                st.json(snap)
+            except Exception as e:
+                st.write(f"snapshot/state の取得に失敗: {e}")
+            cols = st.columns(2)
+            with cols[0]:
+                if st.button("日次カウンタをリセット", key="rg_reset_day"):
+                    try:
+                        if hasattr(tg, 'reset_day') and callable(getattr(tg, 'reset_day')):
+                            tg.reset_day()
+                        else:
+                            # 後方互換: 利用可能ならカウンタを0へ
+                            st.warning("reset_day 未対応のため簡易リセットは省略しました。")
+                        st.toast("日次カウンタをリセットしました", icon="♻️")
+                    except Exception as e:
+                        st.error(f"日次リセット失敗: {e}")
+            with cols[1]:
+                if st.button("スナップショット再取得", key="rg_resnap"):
+                    try:
+                        _ = tg.snapshot() if hasattr(tg, 'snapshot') and callable(getattr(tg, 'snapshot')) else tg.state()
+                        st.toast("スナップショット更新", icon="🔄")
+                    except Exception as e:
+                        st.error(f"再取得失敗: {e}")
+
+# --- ニュースキャッシュ メタ ---
+with st.sidebar.expander("📰 ニュースキャッシュ", expanded=False):
+    ns = st.session_state.get('news_stats', {'hits':0,'miss':0,'size':0})
+    st.write(f"LRUサイズ: {ns.get('size',0)}  /  Hit: {ns.get('hits',0)}  Miss: {ns.get('miss',0)}")
+    if st.button("キャッシュをクリア", key="clear_news_cache"):
+        st.session_state.pop('news_win_cache', None)
+        st.session_state['news_stats'] = {'hits':0,'miss':0,'size':0}
+        st.toast("ニュースキャッシュをクリアしました", icon="🧹")
 # --- セッション別カバレッジ確認用（UI/検証タブ等で利用） ---
 # pred_dfに[session, signal]列がある前提
 # 例: cov_by_sess = pred_df.groupby("session")["signal"].mean()
@@ -142,6 +315,7 @@ from is_in_any_window import is_in_any_window
 # in_news = is_in_any_window(pred_df["timestamp"], windows_df[["start","end"]])
 # pred_df["trade_ok"] = (pred_df["signal"] == 1) & (~in_news)
 from inference_break import load_break_model, load_break_meta, predict_with_session_theta
+from ev_cache import get_ev_tables
 
 import streamlit as st
 
@@ -150,7 +324,94 @@ import pandas as pd
 
 # 学習時と同じ関数を使う
 from ml.time_consistency import build_features
-from ai_train_break import augment_features  # ← Step3-Aで追加した関数
+from features_util import augment_features  # 学習側と同一実装（循環 import 回避）
+
+# === 最終θと注文ゲート適用のヘルパー ===
+def get_final_theta(ts: pd.Timestamp | None = None, windows_df: pd.DataFrame | None = None, meta: dict | None = None) -> float:
+    """既に計算済みの最終θがあればそれを返し、なければその場で合成する。"""
+    th = st.session_state.get('theta_final')
+    if isinstance(th, (int, float)) and np.isfinite(th):
+        return float(th)
+    # フォールバック: 現在時刻 / 画面上の windows / meta を用いて計算
+    ts = ts or (pd.Timestamp.now(tz=JST))
+    meta = meta or st.session_state.get('break_meta', {})
+    windows_df = windows_df if windows_df is not None else st.session_state.get('windows_df', pd.DataFrame())
+    try:
+        th2, _ = compute_final_theta_for_time(ts, meta, windows_df)
+        st.session_state['theta_final'] = th2
+        return float(th2)
+    except Exception:
+        # 最低限、adaptive→base の順
+        return float(st.session_state.get('theta_adaptive', st.session_state.get('theta_base', 0.60)))
+
+def apply_final_gate(pred_df: pd.DataFrame,
+                     windows_df: pd.DataFrame,
+                     *,
+                     signal_col: str = 'signal',
+                     ts_col: str = 'timestamp',
+                     add_columns: bool = True) -> pd.DataFrame:
+    """注文ゲートを一括適用し、trade_ok 列を付与する。
+    - 運用モード（enable_trading）
+    - Drift 自動停止（alert かつ auto_pause）
+    - Guard（in_cooldown のとき停止）
+    - ニュース（ハード抑制のときに停止）
+    ソフト抑制は最終θに織り込む方針のため、ここではブロックしない。
+    """
+    if not isinstance(pred_df, pd.DataFrame) or pred_df.empty:
+        return pred_df
+    df_out = pred_df.copy()
+    # ニュース窓（ハード抑制）
+    apply_news_filter = bool(st.session_state.get('apply_news_filter', False))
+    in_news = None
+    if apply_news_filter and windows_df is not None and not windows_df.empty and ts_col in df_out.columns:
+        try:
+            in_news = is_in_any_window(df_out[ts_col], windows_df[["start","end"]])
+            df_out['in_news'] = in_news
+        except Exception:
+            in_news = None
+    # Guard
+    tg = st.session_state.get('trade_guard')
+    guard_ok = True
+    try:
+        if tg is not None:
+            s = tg.state()
+            guard_ok = not bool(s.get('in_cooldown', False))
+    except Exception:
+        guard_ok = True
+    # ドリフト自動停止
+    drift_block = bool(st.session_state.get('auto_pause_on_drift', True) and (st.session_state.get('drift_state') == 'alert'))
+    # 運用モード
+    enable = bool(st.session_state.get('enable_trading', False))
+    # シグナル列
+    sig = df_out[signal_col] if signal_col in df_out.columns else True
+    # ハードニュースのブロック条件
+    news_block = False
+    if apply_news_filter and isinstance(in_news, (pd.Series, np.ndarray, list)):
+        news_block = in_news
+    elif apply_news_filter:
+        news_block = False
+    # 最終ゲート
+    gate = enable and guard_ok and (not drift_block)
+    df_out['trade_ok'] = gate & (sig.astype(bool)) & (~news_block if isinstance(news_block, (pd.Series, np.ndarray, list)) else (not news_block))
+    # ゲート統計を保存（サマリで表示）
+    try:
+        total = int(len(df_out))
+        ok_cnt = int(df_out['trade_ok'].sum())
+        pass_rate = (ok_cnt / total) if total > 0 else None
+        st.session_state['gate_stats'] = {'total': total, 'trade_ok_count': ok_cnt, 'pass_rate': pass_rate}
+        # 履歴保存（スパークライン用）
+        st.session_state.setdefault('gate_pass_hist', [])
+        pr_val = float(pass_rate) if isinstance(pass_rate, (int, float)) and np.isfinite(pass_rate) else np.nan
+        st.session_state['gate_pass_hist'] = (st.session_state['gate_pass_hist'] + [pr_val])[-200:]
+    except Exception:
+        pass
+    if add_columns:
+        df_out['gate_enable'] = enable
+        df_out['gate_guard_ok'] = guard_ok
+        df_out['gate_drift_block'] = drift_block
+        if apply_news_filter:
+            df_out['gate_news_block'] = news_block if isinstance(news_block, (pd.Series, np.ndarray, list)) else bool(news_block)
+    return df_out
 
 def prepare_df_feats_for_inference(raw_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -189,6 +450,8 @@ def prepare_df_feats_for_inference(raw_df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_resource
 def _load_model_and_meta():
+    """モデルとメタ情報を一度だけ読み込むキャッシュ関数。
+    （重複定義されていたため統合）"""
     model, use_cols = load_break_model("models/break_model.joblib")
     meta = load_break_meta("models/break_meta.json")
     return model, use_cols, meta
@@ -216,6 +479,262 @@ def pick_theta_for_now(meta):
         return float(tbs[sess]["theta"])
     return float(meta.get("threshold", 0.93))
 
+# ---------------- Adaptive θ 基礎実装 ----------------
+def compute_adaptive_theta(base_theta: float,
+                           atr_short: float,
+                           atr_long: float,
+                           coverage_recent: float,
+                           target_coverage: float,
+                           k_atr: float,
+                           k_cov: float,
+                           theta_min: float,
+                           theta_max: float) -> float:
+    """ATR 比率と coverage 偏差で θ を微調整。
+    θ' = base * (1 + k_atr * (atr_ratio-1)) + k_cov * (coverage_recent - target)
+    クリップ後返す。
+    """
+    if not atr_long or atr_long <= 0 or not atr_short or atr_short <= 0:
+        atr_ratio = 1.0
+    else:
+        atr_ratio = float(atr_short / atr_long)
+    theta_prime = base_theta * (1.0 + k_atr * (atr_ratio - 1.0)) + k_cov * (coverage_recent - target_coverage)
+    theta_prime = max(theta_min, min(theta_max, theta_prime))
+    st.session_state.setdefault('theta_meta', {})['last'] = dict(
+        base=base_theta,
+        atr_short=atr_short,
+        atr_long=atr_long,
+        atr_ratio=atr_ratio,
+        coverage_recent=coverage_recent,
+        target_coverage=target_coverage,
+        k_atr=k_atr,
+        k_cov=k_cov,
+        theta_adaptive=theta_prime,
+        theta_min=theta_min,
+        theta_max=theta_max,
+    )
+    return theta_prime
+
+def _rolling_atr(series: pd.Series, period: int) -> float:
+    if series is None or len(series) < period + 1:
+        return float('nan')
+    tr = series.diff().abs()
+    if len(tr) < period:
+        return float('nan')
+    return float(tr.rolling(period).mean().iloc[-1])
+
+def update_adaptive_theta(prob_history: list, window: int = 200) -> float:
+    """prob_history: list[(prob, timestamp)] 直近 window を用いて coverage を求め θ 更新"""
+    if not st.session_state.get('use_adaptive_theta', False):
+        return st.session_state.get('theta_base', 0.60)
+    base_theta = st.session_state.get('theta_base', 0.60)
+    theta_min = st.session_state.get('theta_min', 0.40)
+    theta_max = st.session_state.get('theta_max', 0.85)
+    target_cov = st.session_state.get('theta_target_cov', 0.08)
+    k_atr = st.session_state.get('k_atr', 0.50)
+    k_cov = st.session_state.get('k_cov', 0.50)
+    atr_short_p = st.session_state.get('atr_short_period', 14)
+    atr_long_p  = st.session_state.get('atr_long_period', 56)
+
+    closes = st.session_state.get('recent_closes', [])
+    close_ser = pd.Series(closes) if closes else pd.Series(dtype=float)
+    atr_short = _rolling_atr(close_ser, atr_short_p)
+    atr_long  = _rolling_atr(close_ser, atr_long_p)
+
+    sub = prob_history[-window:] if len(prob_history) > window else prob_history
+    coverage_recent = 0.0
+    if sub:
+        coverage_recent = sum(1 for p,_ in sub if p >= base_theta) / len(sub)
+    adaptive_theta = compute_adaptive_theta(base_theta, atr_short, atr_long,
+                                            coverage_recent, target_cov,
+                                            k_atr, k_cov, theta_min, theta_max)
+    # ドリフトアラート中は θ にブーストを加える（厳しめに）
+    drift_bump = 0.0
+    if st.session_state.get('theta_drift_bump_active', False):
+        drift_bump = float(st.session_state.get('theta_bump_drift', 0.03))
+    theta_final = max(theta_min, min(theta_max, adaptive_theta + drift_bump))
+    st.session_state['theta_adaptive'] = theta_final
+    return theta_final
+
+# ---------------- Drift 総合指標（PSI/KL/JS/H） ----------------
+def compute_drift_score(dm: dict,
+                        w: dict | None = None,
+                        caps: dict | None = None) -> float:
+    """dm: {'psi','kl','js','hellinger'}
+    各指標を0-1に正規化（capで頭打ち）後、重み付き合算して0-1の総合スコアを返す。
+    既定重み: psi 0.5, kl 0.2, js 0.2, h 0.1
+    既定cap: psi 0.5, kl 0.5, js 0.5, h 1.0
+    """
+    w = w or st.session_state.get('drift_weights', {'psi':0.5,'kl':0.2,'js':0.2,'h':0.1})
+    caps = caps or st.session_state.get('drift_caps', {'psi':0.5,'kl':0.5,'js':0.5,'h':1.0})
+    psi = float(dm.get('psi', float('nan')))
+    kl  = float(dm.get('kl',  float('nan')))
+    js  = float(dm.get('js',  float('nan')))
+    h   = float(dm.get('hellinger', float('nan')))
+    def nz(x):
+        return x if np.isfinite(x) and x>=0 else 0.0
+    psi_n = min(1.0, nz(psi) / max(1e-9, caps.get('psi',0.5)))
+    kl_n  = min(1.0, nz(kl)  / max(1e-9, caps.get('kl',0.5)))
+    js_n  = min(1.0, nz(js)  / max(1e-9, caps.get('js',0.5)))
+    h_n   = min(1.0, nz(h)   / max(1e-9, caps.get('h', 1.0)))
+    score = (psi_n * w.get('psi',0.5) +
+             kl_n  * w.get('kl', 0.2) +
+             js_n  * w.get('js', 0.2) +
+             h_n   * w.get('h',  0.1))
+    # 重み和で正規化（安全）
+    wsum = sum([w.get('psi',0.5), w.get('kl',0.2), w.get('js',0.2), w.get('h',0.1)])
+    if wsum <= 0: wsum = 1.0
+    return float(np.clip(score / wsum, 0.0, 1.0))
+
+def _now_session_name(ts: pd.Timestamp) -> str:
+    try:
+        return in_sessions(ts)
+    except Exception:
+        return "Other"
+
+def is_in_news_window(ts: pd.Timestamp, windows_df: pd.DataFrame, *, news_win_minutes: int = 30,
+                      imp_min: int = 3, mode_label: str = "重要度別（赤影と同じ）") -> bool:
+    if mode_label == "重要度別（赤影と同じ）":
+        return is_suppressed(ts, windows_df) if windows_df is not None else False
+    else:
+        # 一律±分（過去イベントのみ考慮、ここでは windows_df を使わず news_df を参照しない設計に合わせる）
+        # 既存コードの _is_suppressed_at の簡易版
+        return False
+
+def compute_final_theta_for_time(ts: pd.Timestamp, meta: dict, windows_df: pd.DataFrame) -> tuple[float, dict]:
+    """最終θを一本化して返す。
+    優先順位: base→session補正（max）→ドリフト→ニュース（ソフト時のみ）→クリップ
+    breakdown で各寄与を返す。
+    """
+    theta_min = st.session_state.get('theta_min', 0.40)
+    theta_max = st.session_state.get('theta_max', 0.85)
+    base_theta = st.session_state.get('theta_adaptive', st.session_state.get('theta_base', 0.60))
+
+    # セッション別（meta优先）。競合を避けるため base と session_theta の“高い方”を採用
+    try:
+        session_theta = pick_theta_for_now(meta)
+    except Exception:
+        session_theta = base_theta
+    base_after_session = max(float(base_theta), float(session_theta))
+    b_session = base_after_session - base_theta
+
+    # ドリフトブースト
+    b_drift = float(st.session_state.get('theta_bump_drift', 0.03)) if st.session_state.get('theta_drift_bump_active', False) else 0.0
+
+    # ニュース（ソフト抑制時のみ）
+    in_news = is_in_news_window(ts, windows_df, news_win_minutes=st.session_state.get('news_win', 30),
+                                imp_min=st.session_state.get('news_imp_min', 3), mode_label=st.session_state.get('news_filter_mode', "重要度別（赤影と同じ）"))
+    st.session_state['soft_suppress_active'] = bool(in_news and st.session_state.get('use_soft_suppress', False))
+    b_news = float(st.session_state.get('theta_bump_in_news', 0.03)) if st.session_state['soft_suppress_active'] else 0.0
+
+    theta_final = base_after_session + b_drift + b_news
+    theta_final = max(theta_min, min(theta_max, theta_final))
+    breakdown = {
+        'base': float(base_theta),
+        'session_used': float(session_theta),
+        'session_bump': float(b_session),
+        'drift_bump': float(b_drift),
+        'news_bump': float(b_news),
+        'min': float(theta_min),
+        'max': float(theta_max),
+        'in_news': bool(in_news),
+    }
+    return float(theta_final), breakdown
+
+def render_meta_summary(df: pd.DataFrame, windows_df: pd.DataFrame, meta: dict):
+    # 最新時刻
+    last_ts = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index)>0 else pd.Timestamp.now(tz=JST)
+    # 最終θ
+    theta_final, br = compute_final_theta_for_time(last_ts, meta, windows_df)
+    st.session_state['theta_final'] = theta_final
+    st.session_state['theta_breakdown'] = br
+    # EV per trade
+    try:
+        ev_meta = load_break_meta("models/break_meta.json")
+        evpt = float(ev_meta.get("ev_per_trade", float('nan')))
+    except Exception:
+        evpt = float('nan')
+    # Drift
+    dm = st.session_state.get('drift_meta', {})
+    score = compute_drift_score(dm)
+    # Guard
+    tg = st.session_state.get('trade_guard')
+    g_state = tg.state() if tg else {}
+    # News
+    ns = st.session_state.get('news_stats', {'hits':0,'miss':0,'size':0})
+    in_news = br.get('in_news', False)
+    # Pending
+    pend = st.session_state.get('pending_trades')
+    pend_cnt = len(pend) if isinstance(pend, (list, tuple)) else 0
+
+    # --- 履歴を更新（スパークライン用）---
+    st.session_state.setdefault('theta_hist', [])
+    st.session_state.setdefault('drift_score_hist', [])
+    st.session_state.setdefault('evpt_hist', [])
+    st.session_state['theta_hist'] = (st.session_state['theta_hist'] + [float(theta_final)])[-200:]
+    st.session_state['drift_score_hist'] = (st.session_state['drift_score_hist'] + [float(score)])[-200:]
+    st.session_state['evpt_hist'] = (st.session_state['evpt_hist'] + [float(evpt) if np.isfinite(evpt) else np.nan])[-200:]
+
+    st.markdown("### 運用サマリ")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        st.metric("EV/trade", f"{evpt:.4f}" if np.isfinite(evpt) else "N/A")
+        st.caption("モデルメタより")
+    with c2:
+        st.metric("θ 最終", f"{theta_final:.3f}")
+        st.caption(f"base {br['base']:.3f} / sess {br['session_used']:.3f} / drift +{br['drift_bump']:.2f} / news +{br['news_bump']:.2f}")
+    with c3:
+        st.metric("ニュース", "抑制中" if in_news else "通常")
+        st.caption(f"LRU {ns.get('size',0)} / H {ns.get('hits',0)} / M {ns.get('miss',0)}")
+    with c4:
+        st.metric("ドリフト", f"{int(round(score*100))}/100")
+        st.caption(f"PSI {dm.get('psi', float('nan')):.3f} / {dm.get('severity','n/a')}")
+    with c5:
+        if g_state:
+            cd = "ON" if g_state.get('in_cooldown') else "OFF"
+            st.metric("Guard", f"{cd}")
+            st.caption(f"day {g_state.get('day_trades','?')}/{g_state.get('max_day_trades','?')}")
+        else:
+            st.metric("Guard", "n/a")
+            st.caption("未初期化")
+    with c6:
+        st.metric("Pending", f"{pend_cnt}")
+        st.caption("未確定建玉数（存在すれば）")
+
+    # --- スパークライン（薄い小型チャート） ---
+    try:
+        import plotly.graph_objects as go
+        def spark(y, color="#8ecae6"):
+            fig = go.Figure(go.Scatter(y=y, mode="lines", line=dict(color=color, width=1)))
+            fig.update_layout(margin=dict(l=0,r=0,t=0,b=0), height=60, xaxis=dict(visible=False), yaxis=dict(visible=False))
+            return fig
+        srow = st.columns(4)
+        with srow[0]:
+            st.plotly_chart(spark(st.session_state['evpt_hist'], "#90be6d"), use_container_width=True)
+            st.caption("EV spark")
+        with srow[1]:
+            st.plotly_chart(spark(st.session_state['theta_hist'], "#577590"), use_container_width=True)
+            st.caption("θ spark")
+        with srow[2]:
+            st.plotly_chart(spark(st.session_state['drift_score_hist'], "#f8961e"), use_container_width=True)
+            st.caption("Drift spark")
+        with srow[3]:
+            st.session_state.setdefault('gate_pass_hist', [])
+            spark_vals = [v*100.0 if isinstance(v, (int,float)) and np.isfinite(v) else np.nan for v in st.session_state['gate_pass_hist']]
+            st.plotly_chart(spark(spark_vals, "#118ab2"), use_container_width=True)
+            st.caption("Gate % spark")
+    except Exception:
+        pass
+
+    # --- ゲート適用の件数とパス率 ---
+    gate_stats = st.session_state.get('gate_stats')
+    if isinstance(gate_stats, dict):
+        gcols = st.columns(2)
+        with gcols[0]:
+            st.metric("trade_ok件数(直近)", f"{gate_stats.get('trade_ok_count', 0)}")
+        with gcols[1]:
+            pr = gate_stats.get('pass_rate')
+            st.metric("ゲート通過率", f"{pr*100:.1f}%" if isinstance(pr, (int,float)) else "N/A")
+
 class PurgedTimeSeriesSplit:
     def __init__(self, n_splits: int = 5, test_size: int | None = None, embargo: int = 0):
         self.n_splits = int(n_splits)
@@ -229,12 +748,7 @@ class PurgedTimeSeriesSplit:
 
 # --- モデル読み込み ---
 
-# --- 共通ローダと推論一括関数に統一 ---
-@st.cache_resource
-def _load_model_and_meta():
-    model, use_cols = load_break_model("models/break_model.joblib")
-    meta = load_break_meta("models/break_meta.json")
-    return model, use_cols, meta
+# （削除）ここにあった _load_model_and_meta の重複定義を統合済み。
 
 # 推論時の利用例
 model, use_cols, meta = _load_model_and_meta()
@@ -254,6 +768,28 @@ def _build_windows_until(t_end: pd.Timestamp, imp_threshold: int) -> pd.DataFram
     if past_events.empty:
         return pd.DataFrame(columns=["start","end","importance","title"])
     return build_event_windows(past_events, imp_threshold=imp_threshold, mapping=imp_map)
+
+# --- ニュース抑制 LRU キャッシュ ---
+from collections import OrderedDict
+_NEWS_CACHE_MAX = 300
+def _get_news_windows_until_cached(t_end: pd.Timestamp, imp_threshold: int) -> pd.DataFrame:
+    key = (pd.Timestamp(t_end).floor('T'), int(imp_threshold))
+    cache = st.session_state.setdefault('news_win_cache', OrderedDict())
+    stats = st.session_state.setdefault('news_stats', {'hits':0, 'miss':0, 'size':0})
+    if key in cache:
+        # move to end (recent)
+        cache.move_to_end(key)
+        stats['hits'] += 1
+        return cache[key]
+    dfw = _build_windows_until(t_end, imp_threshold)
+    cache[key] = dfw
+    cache.move_to_end(key)
+    if len(cache) > _NEWS_CACHE_MAX:
+        cache.popitem(last=False)
+    stats['miss'] += 1
+    stats['size'] = len(cache)
+    return dfw
+    return dfw
 
 def _is_suppressed_at(ts: pd.Timestamp, win_df: pd.DataFrame, news_win_minutes: int,
                       imp_min: int, mode_label: str) -> bool:
@@ -308,7 +844,7 @@ def backtest_rolling(df: pd.DataFrame,
         l1 = float(past["low"].iloc[-2]); h1 = float(past["high"].iloc[-2])
 
         # ---- ニュース抑制（過去のみ）
-        win_df_past = _build_windows_until(t, news_imp_min) if apply_news else pd.DataFrame()
+        win_df_past = _get_news_windows_until_cached(t, news_imp_min) if apply_news else pd.DataFrame()
 
         # 抑制チェック（判定の“基準時刻”で見る）
         if apply_news and _is_suppressed_at(t, win_df_past, news_win, news_imp_min, signal_mode):
@@ -390,7 +926,7 @@ def backtest_rolling(df: pd.DataFrame,
                         t_j = df.index[j]
                         # リテスト時刻でもニュース抑制（過去ニュースのみ）
                         if apply_news:
-                            win_df_j = _build_windows_until(t_j, news_imp_min)
+                            win_df_j = _get_news_windows_until_cached(t_j, news_imp_min)
                             if _is_suppressed_at(t_j, win_df_j, news_win, news_imp_min, signal_mode):
                                 continue
                         if abs(float(df["close"].iloc[j]) - lv) <= touch_buffer:
@@ -407,7 +943,7 @@ def backtest_rolling(df: pd.DataFrame,
                     for j in range(i+1, min(i+K, len(df)-fwd_n)):
                         t_j = df.index[j]
                         if apply_news:
-                            win_df_j = _build_windows_until(t_j, news_imp_min)
+                            win_df_j = _get_news_windows_until_cached(t_j, news_imp_min)
                             if _is_suppressed_at(t_j, win_df_j, news_win, news_imp_min, signal_mode):
                                 continue
                         if abs(float(df["close"].iloc[j]) - lv) <= touch_buffer:
@@ -873,6 +1409,586 @@ signal_mode = st.sidebar.selectbox(
 retest_wait_k_base = st.sidebar.slider("リテスト待機本数K", 3, 30, 10)
 st.sidebar.caption("ブレイク後、K本以内にライン/バンドへ戻ったかで『リテストあり/なし』を判定（指数0〜1も算出）")
 
+with st.sidebar.expander("Adaptive θ", expanded=False):
+    st.session_state.setdefault('theta_base', 0.60)
+    st.session_state.setdefault('use_adaptive_theta', False)
+    st.session_state['use_adaptive_theta'] = st.checkbox("有効化", value=st.session_state['use_adaptive_theta'])
+    st.session_state['theta_base'] = st.number_input("基礎θ", 0.30, 0.99, float(st.session_state['theta_base']), 0.01)
+    st.session_state['theta_min'] = st.number_input("θ最小", 0.10, 0.99, st.session_state.get('theta_min', 0.40), 0.01)
+    st.session_state['theta_max'] = st.number_input("θ最大", 0.10, 0.99, st.session_state.get('theta_max', 0.85), 0.01)
+    st.session_state['theta_target_cov'] = st.number_input("目標Coverage", 0.01, 0.50, st.session_state.get('theta_target_cov', 0.08), 0.01)
+    st.session_state['k_atr'] = st.slider("ATR影響係数 k_atr", 0.0, 1.5, float(st.session_state.get('k_atr', 0.5)), 0.05)
+    st.session_state['k_cov'] = st.slider("Coverage影響係数 k_cov", 0.0, 2.0, float(st.session_state.get('k_cov', 0.5)), 0.05)
+    st.session_state['atr_short_period'] = st.slider("ATR短期", 5, 60, int(st.session_state.get('atr_short_period', 14)))
+    st.session_state['atr_long_period']  = st.slider("ATR長期", 20, 200, int(st.session_state.get('atr_long_period', 56)))
+    st.caption("ATR比率 + 発火率偏差で θ を微調整します")
+
+# --- Adaptive θ プリセット（Conservative/Balanced/Aggressive）---
+with st.sidebar.expander("Adaptive θ プリセット", expanded=False):
+    c1, c2, c3 = st.columns(3)
+    def _apply_preset(name: str):
+        if name == "Conservative":
+            st.session_state['theta_base'] = 0.64
+            st.session_state['theta_min'] = 0.50
+            st.session_state['theta_max'] = 0.90
+            st.session_state['theta_target_cov'] = 0.06
+            st.session_state['k_atr'] = 0.70
+            st.session_state['k_cov'] = 0.30
+        elif name == "Balanced":
+            st.session_state['theta_base'] = 0.60
+            st.session_state['theta_min'] = 0.45
+            st.session_state['theta_max'] = 0.88
+            st.session_state['theta_target_cov'] = 0.08
+            st.session_state['k_atr'] = 0.50
+            st.session_state['k_cov'] = 0.50
+        else:  # Aggressive
+            st.session_state['theta_base'] = 0.56
+            st.session_state['theta_min'] = 0.40
+            st.session_state['theta_max'] = 0.85
+            st.session_state['theta_target_cov'] = 0.10
+            st.session_state['k_atr'] = 0.30
+            st.session_state['k_cov'] = 0.70
+        st.toast(f"プリセット適用: {name}")
+    with c1:
+        if st.button("Conservative"):
+            _apply_preset("Conservative")
+    with c2:
+        if st.button("Balanced"):
+            _apply_preset("Balanced")
+    with c3:
+        if st.button("Aggressive"):
+            _apply_preset("Aggressive")
+
+# --- ドリフト監視（ヒステリシス＋自動ガード/θブースト）---
+with st.sidebar.expander("📉 データドリフト監視", expanded=False):
+    st.session_state.setdefault('drift_meta', {})
+    # しきい値と作用
+    hi_thr = st.number_input("PSI High（一時停止）", 0.0, 1.0, float(st.session_state.get('psi_hi', 0.25)), 0.01, key="psi_hi")
+    lo_thr = st.number_input("PSI Low（復帰）", 0.0, 1.0, float(st.session_state.get('psi_lo', 0.15)), 0.01, key="psi_lo")
+    theta_bump_drift = st.number_input("ドリフト時 θ 追加", 0.00, 0.20, float(st.session_state.get('theta_bump_drift', 0.03)), 0.01, key="theta_bump_drift")
+    auto_pause = st.checkbox("自動で運用一時停止（EVゲートOFF）", value=st.session_state.get('auto_pause_on_drift', True), key="auto_pause_on_drift")
+    cooldown_sec = st.number_input("通知クールダウン(秒)", 0, 3600, int(st.session_state.get('drift_alert_cooldown_sec', 120)), 10, key="drift_alert_cooldown_sec")
+    # 総合スコアで自動停止するオプション
+    use_comp = st.checkbox("総合スコアで自動停止を判定", value=st.session_state.get('drift_use_composite', True), key="drift_use_composite")
+    score_hi = st.slider("スコア High（一時停止）", 0.0, 1.0, float(st.session_state.get('drift_score_hi', 0.55)), 0.01, key="drift_score_hi")
+    score_lo = st.slider("スコア Low（復帰）", 0.0, 1.0, float(st.session_state.get('drift_score_lo', 0.40)), 0.01, key="drift_score_lo")
+    # 現在値（UI下段）
+    dm = st.session_state.get('drift_meta') or {}
+    dscore = compute_drift_score(dm)
+    st.caption(f"PSI={dm.get('psi', float('nan')):.3f} / KL={dm.get('kl', float('nan')):.3f} / JS={dm.get('js', float('nan')):.3f} / H={dm.get('hellinger', float('nan')):.3f} / Score={dscore:.3f}")
+    # ヒステリシス状態を保持
+    st.session_state.setdefault('drift_state', 'ok')
+    state = st.session_state['drift_state']
+    psi_now = float(dm.get('psi', float('nan')))
+    # 判定は総合スコア/PSIのどちらか（オプション）
+    if use_comp:
+        now_ts = pd.Timestamp.utcnow()
+        last_toast = st.session_state.get('drift_last_toast_ts')
+        def _can_toast():
+            if not isinstance(last_toast, pd.Timestamp):
+                return True
+            return (now_ts - last_toast).total_seconds() >= int(st.session_state.get('drift_alert_cooldown_sec', 120))
+        if state in ('ok','recover') and dscore >= score_hi:
+            st.session_state['drift_state'] = 'alert'
+            if auto_pause:
+                st.session_state['enable_trading'] = False
+            if _can_toast():
+                st.toast("Drift ScoreがHighを超過: alert に遷移", icon="⚠️")
+                st.session_state['drift_last_toast_ts'] = now_ts
+        elif state == 'alert' and dscore <= score_lo:
+            st.session_state['drift_state'] = 'recover'
+            if _can_toast():
+                st.toast("Drift ScoreがLowを下回り: recover に遷移", icon="✅")
+                st.session_state['drift_last_toast_ts'] = now_ts
+    else:
+        if np.isfinite(psi_now):
+            now_ts = pd.Timestamp.utcnow()
+            last_toast = st.session_state.get('drift_last_toast_ts')
+            def _can_toast():
+                if not isinstance(last_toast, pd.Timestamp):
+                    return True
+                return (now_ts - last_toast).total_seconds() >= int(st.session_state.get('drift_alert_cooldown_sec', 120))
+            if state in ('ok','recover') and psi_now >= hi_thr:
+                st.session_state['drift_state'] = 'alert'
+                if auto_pause:
+                    st.session_state['enable_trading'] = False
+                if _can_toast():
+                    st.toast("PSIがHighを超過: alert に遷移", icon="⚠️")
+                    st.session_state['drift_last_toast_ts'] = now_ts
+            elif state == 'alert' and psi_now <= lo_thr:
+                st.session_state['drift_state'] = 'recover'
+                if _can_toast():
+                    st.toast("PSIがLowを下回り: recover に遷移", icon="✅")
+                    st.session_state['drift_last_toast_ts'] = now_ts
+    st.write(f"状態: {st.session_state['drift_state']}")
+    # θブーストは状態に応じて適用（実際のθ計算側で参照）
+    st.session_state['theta_drift_bump_active'] = (st.session_state['drift_state'] == 'alert')
+    # 軽量チューナー（重み & キャップ）
+    with st.container():
+        st.caption("— 総合スコア重み／キャップ（微調整）—")
+        w = st.session_state.get('drift_weights', {'psi':0.5,'kl':0.2,'js':0.2,'h':0.1})
+        caps = st.session_state.get('drift_caps', {'psi':0.5,'kl':0.5,'js':0.5,'h':1.0})
+        cw1, cw2, cw3, cw4 = st.columns(4)
+        w['psi'] = cw1.number_input('w_PSI', 0.0, 1.0, float(w.get('psi',0.5)), 0.05)
+        w['kl']  = cw2.number_input('w_KL', 0.0, 1.0, float(w.get('kl',0.2)), 0.05)
+        w['js']  = cw3.number_input('w_JS', 0.0, 1.0, float(w.get('js',0.2)), 0.05)
+        w['h']   = cw4.number_input('w_H',  0.0, 1.0, float(w.get('h',0.1)), 0.05)
+        st.session_state['drift_weights'] = w
+
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        caps['psi'] = cc1.number_input('cap_PSI', 0.10, 2.00, float(caps.get('psi',0.5)), 0.01)
+        caps['kl']  = cc2.number_input('cap_KL',  0.05, 2.00, float(caps.get('kl',0.5)), 0.01)
+        caps['js']  = cc3.number_input('cap_JS',  0.05, 2.00, float(caps.get('js',0.5)), 0.01)
+        caps['h']   = cc4.number_input('cap_H',   0.10, 2.00, float(caps.get('h',1.0)), 0.01)
+        st.session_state['drift_caps'] = caps
+
+        # プリセット適用
+        st.caption("— プリセット —")
+        p1, p2, p3 = st.columns(3)
+        def _apply_drift_preset(name: str):
+            if name == "Conservative":
+                st.session_state['drift_weights'] = {'psi':0.55,'kl':0.20,'js':0.15,'h':0.10}
+                st.session_state['drift_caps']    = {'psi':0.35,'kl':0.30,'js':0.30,'h':0.80}
+            elif name == "Balanced":
+                st.session_state['drift_weights'] = {'psi':0.50,'kl':0.20,'js':0.20,'h':0.10}
+                st.session_state['drift_caps']    = {'psi':0.50,'kl':0.50,'js':0.50,'h':1.00}
+            else:  # Aggressive
+                st.session_state['drift_weights'] = {'psi':0.45,'kl':0.25,'js':0.20,'h':0.10}
+                st.session_state['drift_caps']    = {'psi':0.70,'kl':0.70,'js':0.70,'h':1.20}
+            st.toast(f"Driftプリセット適用: {name}")
+        with p1:
+            if st.button("Conservative", key="drift_preset_consv"):
+                _apply_drift_preset("Conservative")
+        with p2:
+            if st.button("Balanced", key="drift_preset_bal"):
+                _apply_drift_preset("Balanced")
+        with p3:
+            if st.button("Aggressive", key="drift_preset_aggr"):
+                _apply_drift_preset("Aggressive")
+
+# --- 直近1–2日 簡易バックテスト（AP/Brier/ECE） ---
+with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
+    st.caption("モデル確率と価格ラベルから直近の指標をざっくり確認（未来情報リークなしの特徴量で推論）")
+    look_days = st.radio("評価期間", [1, 2], index=0, horizontal=True, key="quick_eval_days")
+    n_bins = st.slider("ECEビン数", 5, 20, 10, 1, key="quick_eval_bins")
+    run_quick = st.button("▶ 直近評価を実行", key="run_quick_eval")
+
+    if run_quick:
+        try:
+            # 1) データ取得（優先: 画面の df → フォールバック: data/USDJPY_15m.csv）
+            raw = globals().get('df', None)
+            if raw is None or not isinstance(raw, pd.DataFrame) or raw.empty:
+                # フォールバック読込
+                import os
+                csv_path = os.path.join("data", "USDJPY_15m.csv")
+                if os.path.exists(csv_path):
+                    tmp = pd.read_csv(csv_path)
+                    # 列名の正規化
+                    ren = {}
+                    for c in tmp.columns:
+                        lc = c.lower()
+                        if lc in ["timestamp","time","date"]:
+                            ren[c] = "timestamp"
+                        elif lc in ["open","high","low","close","volume"]:
+                            ren[c] = lc
+                    tmp = tmp.rename(columns=ren)
+                    if "timestamp" not in tmp.columns:
+                        raise RuntimeError("CSV に timestamp 列が見当たりません")
+                    tmp["timestamp"] = pd.to_datetime(tmp["timestamp"])  # 可能ならJST
+                    # 最低限の列のみ使用
+                    keep = [c for c in ["timestamp","open","high","low","close","volume"] if c in tmp.columns]
+                    raw = tmp[keep].copy()
+                else:
+                    raise RuntimeError("価格データが見つかりません（画面dfなし/CSVなし）")
+
+            # 2) 直近 look_days のスライス（余裕を持って過去も含める）
+            df_raw = raw.copy()
+            if "timestamp" in df_raw.columns:
+                df_raw["timestamp"] = pd.to_datetime(df_raw["timestamp"])
+                t_end = df_raw["timestamp"].iloc[-1]
+                t_start = t_end - pd.Timedelta(days=int(look_days))
+                # 特徴量のローリング安定化のため余白 +2日
+                t_start_wide = t_start - pd.Timedelta(days=2)
+                df_raw = df_raw.loc[df_raw["timestamp"] >= t_start_wide].reset_index(drop=True)
+            else:
+                # タイムスタンプがない場合は末尾N本で近似
+                n_per_day = 96  # 15分足前提
+                take = int((2 + int(look_days)) * n_per_day)
+                df_raw = df_raw.tail(take).reset_index(drop=True)
+
+            # 3) 特徴量作成（未来情報なし）
+            try:
+                df_feats = prepare_df_feats_for_inference(df_raw)
+            except Exception as e:
+                st.error(f"特徴量生成に失敗: {e}")
+                df_feats = None
+            if df_feats is None or df_feats.empty:
+                st.warning("特徴量が空です（データ不足の可能性）")
+            else:
+                # 4) モデル/メタ読み込み → 推論
+                try:
+                    model, use_cols = load_break_model("models/break_model.joblib")
+                    meta_local = load_break_meta("models/break_meta.json")
+                    pred = predict_with_session_theta(df_feats, model, use_cols, meta_local)
+                except Exception as e:
+                    st.error(f"推論に失敗: {e}")
+                    pred = None
+
+                # 5) 教師ラベル（直近H本先のブレイク成否）
+                from label_break import build_break_labels, BreakLabelConfig as BreakCfg
+                H = 12
+                try:
+                    H = int(st.session_state.get('break_prob_h', 12))
+                except Exception:
+                    H = 12
+                cfg = BreakCfg(H=H)
+                try:
+                    windows_df = st.session_state.get('windows_df')
+                except Exception:
+                    windows_df = None
+                try:
+                    labels = build_break_labels(df_raw.rename(columns={c:c.lower() for c in df_raw.columns}), cfg,
+                                                windows_df=windows_df)
+                except Exception as e:
+                    st.error(f"ラベル生成に失敗: {e}")
+                    labels = None
+
+                # 6) マージ（timestampで内積）
+                if pred is not None and labels is not None and not pred.empty and not labels.empty:
+                    p = pred.copy()
+                    p["timestamp"] = pd.to_datetime(p["timestamp"]).dt.tz_localize(None)
+                    y = labels[["timestamp","y"]].copy()
+                    y["timestamp"] = pd.to_datetime(y["timestamp"]).dt.tz_localize(None)
+                    # 期間フィルタ（本評価期間のみ）
+                    if "timestamp" in df_raw.columns:
+                        mask = (y["timestamp"] >= t_start)
+                        y = y.loc[mask]
+                    merged = p.merge(y, on="timestamp", how="inner")
+                    merged = merged.dropna(subset=["y","proba"]).copy()
+                    merged = merged[(merged["y"].isin([0,1])) & merged["proba"].between(0,1)]
+
+                    if merged.empty:
+                        st.warning("評価対象のサンプルがありませんでした。期間や前処理を見直してください。")
+                    else:
+                        import numpy as _np
+                        from sklearn.metrics import average_precision_score, brier_score_loss
+                        from calibration import _reliability_table
+                        y_true = merged["y"].astype(int).values
+                        proba  = merged["proba"].astype(float).values
+                        try:
+                            ap = float(average_precision_score(y_true, proba))
+                        except Exception:
+                            ap = float('nan')
+                        try:
+                            brier = float(brier_score_loss(y_true, proba))
+                        except Exception:
+                            brier = float('nan')
+                        try:
+                            cal = _reliability_table(y_true=_np.asarray(y_true), proba=_np.asarray(proba), n_bins=int(n_bins), strategy="quantile")
+                            ece = float(cal.ece)
+                        except Exception:
+                            ece = float('nan')
+
+                        n_all = int(len(merged)); n_pos = int((merged["y"]==1).sum())
+                        c1, c2, c3, c4 = st.columns(4)
+                        with c1:
+                            st.metric("AP", f"{ap:.4f}" if _np.isfinite(ap) else "N/A")
+                            st.caption(f"n={n_all}, pos={n_pos}")
+                        with c2:
+                            st.metric("Brier", f"{brier:.4f}" if _np.isfinite(brier) else "N/A")
+                            st.caption("低いほど良い")
+                        with c3:
+                            st.metric("ECE", f"{ece:.4f}" if _np.isfinite(ece) else "N/A")
+                            st.caption(f"bins={int(n_bins)}")
+                        with c4:
+                            st.metric("H", f"{H}")
+
+                        # 簡易信頼度プロット（スパークライン風）
+                        try:
+                            import plotly.graph_objects as go
+                            qs = pd.qcut(merged["proba"], q=min(10, max(3,int(n_bins))), duplicates="drop")
+                            tab = merged.groupby(qs).agg(prob_mean=("proba","mean"), frac_pos=("y","mean"))
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=tab["prob_mean"], y=tab["frac_pos"], mode="lines+markers", name="Observed"))
+                            fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode="lines", name="Ideal", line=dict(dash="dash")))
+                            fig.update_layout(margin=dict(l=0,r=0,t=0,b=0), height=180)
+                            st.plotly_chart(fig, use_container_width=True)
+                        except Exception:
+                            pass
+                else:
+                    st.warning("推論またはラベルが空のため評価をスキップしました。")
+        except Exception as e:
+            st.error(f"簡易評価の実行に失敗: {e}")
+
+# --- 簡易バックテスト（グリッド＋Apply Best） ---
+with st.sidebar.expander("🧪 グリッド評価（Apply Best）", expanded=False):
+    st.caption("θ とドリフト設定（重み/キャップ/ヒステリシス）を小規模グリッドで試し、最良案を適用")
+
+    # — コントロール —
+    look_days_g = st.radio("評価期間", [1, 2], index=0, horizontal=True, key="grid_eval_days")
+    st.markdown("- θ の探索範囲（base θ を対象）")
+    th_min = st.number_input("θ min", 0.30, 0.99, float(st.session_state.get('theta_min', 0.40)), 0.01, key="grid_theta_min")
+    th_max = st.number_input("θ max", 0.30, 0.99, float(st.session_state.get('theta_max', 0.85)), 0.01, key="grid_theta_max")
+    th_step = st.number_input("θ step", 0.001, 0.10, 0.01, 0.001, key="grid_theta_step")
+    tgt_cov = float(st.session_state.get('theta_target_cov', 0.08))
+    st.caption(f"目標Coverage={tgt_cov:.2%}（セッション設定から）")
+
+    st.markdown("- ドリフト設定の候補（プリセット×閾値）")
+    drift_preset_names = ["Conservative", "Balanced", "Aggressive"]
+    hysteresis_sets = [
+        {"name": "Tight", "hi": 0.45, "lo": 0.35},
+        {"name": "Balanced", "hi": 0.55, "lo": 0.40},
+        {"name": "Loose", "hi": 0.65, "lo": 0.50},
+    ]
+    run_grid = st.button("▶ グリッド評価を実行", key="run_grid_eval")
+
+    def _load_recent_raw_df(days: int) -> pd.DataFrame:
+        raw = globals().get('df', None)
+        if raw is None or not isinstance(raw, pd.DataFrame) or raw.empty:
+            import os
+            csv_path = os.path.join("data", "USDJPY_15m.csv")
+            if os.path.exists(csv_path):
+                tmp = pd.read_csv(csv_path)
+                ren = {}
+                for c in tmp.columns:
+                    lc = str(c).lower()
+                    if lc in ["timestamp","time","date"]:
+                        ren[c] = "timestamp"
+                    elif lc in ["open","high","low","close","volume"]:
+                        ren[c] = lc
+                tmp = tmp.rename(columns=ren)
+                if "timestamp" not in tmp.columns:
+                    return pd.DataFrame()
+                tmp["timestamp"] = pd.to_datetime(tmp["timestamp"]).dt.tz_localize(None)
+                keep = [c for c in ["timestamp","open","high","low","close","volume"] if c in tmp.columns]
+                raw = tmp[keep].copy()
+            else:
+                return pd.DataFrame()
+        df_raw = raw.copy()
+        if "timestamp" in df_raw.columns:
+            df_raw["timestamp"] = pd.to_datetime(df_raw["timestamp"]).dt.tz_localize(None)
+            t_end = df_raw["timestamp"].iloc[-1]
+            t_start = t_end - pd.Timedelta(days=int(days))
+            t_start_wide = t_start - pd.Timedelta(days=2)
+            df_raw = df_raw.loc[df_raw["timestamp"] >= t_start_wide].reset_index(drop=True)
+        else:
+            n_per_day = 96
+            take = int((2 + int(days)) * n_per_day)
+            df_raw = df_raw.tail(take).reset_index(drop=True)
+        return df_raw
+
+    def _recent_pred_and_labels(days: int) -> pd.DataFrame:
+        """直近 days 日の proba と y を返す DataFrame(timestamp, proba, y)。なければ空。"""
+        df_raw = _load_recent_raw_df(days)
+        if df_raw is None or df_raw.empty:
+            return pd.DataFrame()
+        try:
+            df_feats = prepare_df_feats_for_inference(df_raw)
+            model, use_cols = load_break_model("models/break_model.joblib")
+            meta_local = load_break_meta("models/break_meta.json")
+            pred = predict_with_session_theta(df_feats, model, use_cols, meta_local)
+        except Exception:
+            return pd.DataFrame()
+        from label_break import build_break_labels, BreakLabelConfig as BreakCfg
+        H = 12
+        try:
+            H = int(st.session_state.get('break_prob_h', 12))
+        except Exception:
+            H = 12
+        try:
+            labels = build_break_labels(df_raw.rename(columns={c:c.lower() for c in df_raw.columns}), BreakCfg(H=H),
+                                        windows_df=st.session_state.get('windows_df'))
+        except Exception:
+            return pd.DataFrame()
+        if pred is None or pred.empty or labels is None or labels.empty:
+            return pd.DataFrame()
+        p = pred.copy(); y = labels[["timestamp","y"]].copy()
+        p["timestamp"] = pd.to_datetime(p["timestamp"]).dt.tz_localize(None)
+        y["timestamp"] = pd.to_datetime(y["timestamp"]).dt.tz_localize(None)
+        if "timestamp" in df_raw.columns:
+            t_end = df_raw["timestamp"].iloc[-1]
+            t_start = t_end - pd.Timedelta(days=int(days))
+            y = y.loc[y["timestamp"] >= t_start]
+        merged = p.merge(y, on="timestamp", how="inner").dropna(subset=["y","proba"])
+        merged = merged[(merged["y"].isin([0,1])) & (merged["proba"].between(0,1))]
+        return merged
+
+    def _theta_grid_candidates(lo: float, hi: float, step: float) -> list[float]:
+        if hi < lo: lo, hi = hi, lo
+        n = int(max(1, round((hi - lo) / max(step, 1e-6))) + 1)
+        vals = [float(np.round(lo + i*step, 6)) for i in range(n)]
+        # 数値誤差で上限を超える場合除去
+        return [v for v in vals if lo - 1e-9 <= v <= hi + 1e-9]
+
+    def _drift_preset(name: str) -> tuple[dict, dict]:
+        if name == "Conservative":
+            return ({'psi':0.55,'kl':0.20,'js':0.15,'h':0.10}, {'psi':0.35,'kl':0.30,'js':0.30,'h':0.80})
+        if name == "Aggressive":
+            return ({'psi':0.45,'kl':0.25,'js':0.20,'h':0.10}, {'psi':0.70,'kl':0.70,'js':0.70,'h':1.20})
+        return ({'psi':0.50,'kl':0.20,'js':0.20,'h':0.10}, {'psi':0.50,'kl':0.50,'js':0.50,'h':1.00})
+
+    def _evaluate_theta(merged_df: pd.DataFrame, thetas: list[float], target_cov: float) -> dict:
+        if merged_df is None or merged_df.empty:
+            return {"best": None, "table": []}
+        rows = []
+        n = len(merged_df)
+        for th in thetas:
+            cov = float((merged_df["proba"] >= th).mean()) if n>0 else float('nan')
+            diff = abs(cov - target_cov) if np.isfinite(cov) else float('inf')
+            rows.append({"theta": float(th), "coverage": cov, "diff": diff})
+        rows = sorted(rows, key=lambda r: (r["diff"], -r["coverage"]))
+        best = rows[0] if rows else None
+        return {"best": best, "table": rows[:10]}
+
+    def _evaluate_drift_grid(prob_buffer: list[float], baseline_probs: np.ndarray | None,
+                             presets: list[str], hysets: list[dict]) -> dict:
+        """ドリフトの候補を評価。指標: アラート率（低いほど良い）と平均スコア（低いほど良い）。"""
+        if baseline_probs is None or not prob_buffer or len(prob_buffer) < 200:
+            return {"best": None, "table": []}
+        curr = np.asarray(prob_buffer[-1000:], dtype=float)
+        # ローリング窓でドリフトを評価
+        W = 300; STEP = 100
+        idxs = list(range(max(0, len(curr)-W), len(curr), STEP))
+        if not idxs:
+            idxs = [len(curr)-W] if len(curr) >= W else [0]
+        results = []
+        for pname in presets:
+            w, caps = _drift_preset(pname)
+            for hy in hysets:
+                hi, lo = float(hy["hi"]), float(hy["lo"])
+                state = 'ok'
+                alerts = 0; total = 0; scores = []
+                for s0 in idxs:
+                    seg = curr[max(0, s0-W):s0] if s0>0 else curr[:W]
+                    if seg.size < 100:
+                        continue
+                    try:
+                        # PSI/KL/JS/H
+                        psi_val, _edges = compute_psi(baseline_probs, seg, edges=None)
+                        ds = drift_summary(baseline_probs, seg)
+                        dm = {"psi": float(psi_val),
+                              "kl": float(ds.get('kl', float('nan'))),
+                              "js": float(ds.get('js', float('nan'))),
+                              "hellinger": float(ds.get('hellinger', float('nan')))}
+                        score = compute_drift_score(dm, w=w, caps=caps)
+                    except Exception:
+                        score = float('nan')
+                    scores.append(score)
+                    # ヒステリシス遷移
+                    if state in ('ok','recover') and np.isfinite(score) and score >= hi:
+                        state = 'alert'
+                    elif state == 'alert' and np.isfinite(score) and score <= lo:
+                        state = 'recover'
+                    if state == 'alert':
+                        alerts += 1
+                    total += 1
+                alert_rate = (alerts/total) if total>0 else float('nan')
+                avg_score = float(np.nanmean(scores)) if scores else float('nan')
+                results.append({
+                    "preset": pname, "hy": hy["name"], "hi": hi, "lo": lo,
+                    "alert_rate": alert_rate, "avg_score": avg_score,
+                    "weights": w, "caps": caps
+                })
+        # ソート: alert率→平均スコア
+        results = sorted(results, key=lambda r: (
+            float('inf') if not np.isfinite(r["alert_rate"]) else r["alert_rate"],
+            float('inf') if not np.isfinite(r["avg_score"]) else r["avg_score"]
+        ))
+        best = results[0] if results else None
+        return {"best": best, "table": results[:6]}
+
+    if run_grid:
+        try:
+            merged = _recent_pred_and_labels(int(look_days_g))
+            thetas = _theta_grid_candidates(float(th_min), float(th_max), float(th_step))
+            theta_res = _evaluate_theta(merged, thetas, tgt_cov)
+
+            drift_res = _evaluate_drift_grid(
+                st.session_state.get('prob_buffer', []),
+                baseline_probs,
+                drift_preset_names,
+                hysteresis_sets
+            )
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**θ Best**")
+                b = theta_res.get("best")
+                if b:
+                    st.write({k:(f"{v:.4f}" if isinstance(v,(int,float)) else v) for k,v in b.items()})
+                    st.caption("上位候補（diff小→coverage高）")
+                    st.dataframe(pd.DataFrame(theta_res.get("table", [])), use_container_width=True)
+                else:
+                    st.info("θ 評価に十分なデータがありません。モデル/価格データをご確認ください。")
+            with c2:
+                st.markdown("**Drift Best**")
+                db = drift_res.get("best")
+                if db:
+                    show = {**{k:db[k] for k in ["preset","hy","hi","lo"]},
+                            "alert_rate": (f"{db['alert_rate']*100:.1f}%" if np.isfinite(db['alert_rate']) else "N/A"),
+                            "avg_score": (f"{db['avg_score']:.3f}" if np.isfinite(db['avg_score']) else "N/A")}
+                    st.write(show)
+                    st.caption("上位候補（alert率→平均スコア）")
+                    st.dataframe(pd.DataFrame(drift_res.get("table", [])), use_container_width=True)
+                else:
+                    st.info("ドリフト評価に十分な履歴/ベースラインがありません。")
+
+            # — Apply Best —
+            def _apply_with_guards(theta_best: dict | None, drift_best: dict | None):
+                st.session_state.setdefault('apply_best_audit', [])
+                ts = pd.Timestamp.utcnow()
+                entry = {"ts": str(ts)}
+                # θ: 1回の変更は±0.05以内にクランプ（安全）
+                if theta_best and isinstance(theta_best.get("theta"), (int,float)):
+                    old = float(st.session_state.get('theta_base', 0.60))
+                    new = float(theta_best["theta"])
+                    if abs(new - old) > 0.05:
+                        new = old + np.sign(new - old) * 0.05
+                    new = float(np.clip(new, float(th_min), float(th_max)))
+                    st.session_state['theta_base'] = new
+                    entry["theta"] = {"old": old, "new": new}
+                # Drift: weights/caps + hysteresis
+                if drift_best:
+                    w = drift_best.get("weights"); c = drift_best.get("caps")
+                    hi = float(drift_best.get("hi", st.session_state.get('drift_score_hi', 0.55)))
+                    lo = float(drift_best.get("lo", st.session_state.get('drift_score_lo', 0.40)))
+                    # クランプ
+                    hi = float(np.clip(hi, 0.30, 0.90)); lo = float(np.clip(lo, 0.20, hi-0.05))
+                    if isinstance(w, dict):
+                        prev_w = st.session_state.get('drift_weights', {}).copy()
+                        st.session_state['drift_weights'] = w
+                        entry["drift_weights"] = {"old": prev_w, "new": w}
+                    if isinstance(c, dict):
+                        prev_c = st.session_state.get('drift_caps', {}).copy()
+                        st.session_state['drift_caps'] = c
+                        entry["drift_caps"] = {"old": prev_c, "new": c}
+                    prev_hi = st.session_state.get('drift_score_hi', 0.55)
+                    prev_lo = st.session_state.get('drift_score_lo', 0.40)
+                    st.session_state['drift_score_hi'] = hi
+                    st.session_state['drift_score_lo'] = lo
+                    entry["drift_hysteresis"] = {"old": {"hi": prev_hi, "lo": prev_lo}, "new": {"hi": hi, "lo": lo}}
+                    st.session_state['drift_use_composite'] = True
+                st.session_state['apply_best_audit'].append(entry)
+
+            colL, colR = st.columns([2,1])
+            with colL:
+                if st.button("✅ Apply Best を適用", type="primary", key="apply_best_now"):
+                    _apply_with_guards(theta_res.get("best"), drift_res.get("best"))
+                    st.toast("Best 設定を適用しました", icon="✅")
+            with colR:
+                if st.button("🧹 監査ログをクリア", key="clear_apply_audit"):
+                    st.session_state['apply_best_audit'] = []
+                    st.toast("監査ログをクリアしました", icon="🧹")
+
+            # 監査ログの表示
+            logs = st.session_state.get('apply_best_audit', [])
+            if logs:
+                st.caption("— 変更の監査ログ（直近）—")
+                st.dataframe(pd.DataFrame(logs[::-1])[:10], use_container_width=True)
+
+        except Exception as e:
+            st.error(f"グリッド評価でエラー: {e}")
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("極値検出（スイング）")
 look = st.sidebar.slider("左右の窓幅", 3, 15, 5)
@@ -931,6 +2047,10 @@ with st.sidebar.expander("ニュース・指標フィルタ / 赤影", expanded=
     use_soft_suppress = st.checkbox("ソフト抑制（窓内だけ判定を厳しめに）", value=True)
     soft_break_add = st.number_input("ソフト: ブレイクバッファ 追加", value=0.02, step=0.01, format="%.2f")
     soft_K_add = st.slider("ソフト: K 追加", 0, 10, 4)
+    st.markdown("— 自動強化（重要イベントプリセット）—")
+    auto_harden = st.checkbox("★4以上の直近イベントで自動ハード化", value=True)
+    auto_harden_min_before = st.number_input("ハード化: 直前最低分", value=30, step=5)
+    auto_harden_min_after = st.number_input("ハード化: 直後最低分", value=60, step=5)
 
 # ---------------- バックテスト ----------------
 st.sidebar.markdown("---")
@@ -1096,6 +2216,25 @@ with st.spinner("データ取得中..."):
     # --- ここでJST統一 ---
     df = ensure_jst_index(df)
 
+# --- ドリフトメタの更新（価格取得後・確率バッファ更新の前後どちらでも可）---
+st.session_state.setdefault('prob_buffer', [])
+try:
+    # ここでは pred 確率が未計算のため、最新価格のダミーで更新せずスキップすることもある
+    curr_probs = list(st.session_state.get('prob_buffer', []))[-200:]
+    psi_val = float('nan'); sev = 'n/a'; ex_rate=float('nan'); kl=js=hell=float('nan')
+    if len(curr_probs) >= 50 and baseline_probs is not None:
+        psi_val, sev, ex_rate, kl, js, hell = calc_psi_and_exrate(curr_probs, baseline_probs, st.session_state.get('theta_base',0.6), st.session_state.get('theta_base',0.6))
+    st.session_state['drift_meta'] = {
+        'psi': psi_val,
+        'severity': sev,
+        'exceed_rate': ex_rate,
+        'kl': kl,
+        'js': js,
+        'hellinger': hell,
+    }
+except Exception as e:
+    st.session_state['drift_meta'] = st.session_state.get('drift_meta', {})
+
 # ---------------- 極値 & レベル ----------------
 def swing_pivots(df: pd.DataFrame, look: int):
     highs = df["high"].rolling(look, center=True).max()
@@ -1146,6 +2285,7 @@ def compute_level_scores(df: pd.DataFrame, levels: list, touch_buffer: float,
     atr_recent = float(_atr.iloc[-1]) if not _atr.empty else 0.0
     rec_close = float(df["close"].iloc[-1])
 
+    import math
     rows=[]
     for lv in levels:
         touch_mask = ((df["low"] <= lv) & (df["high"] >= lv)) | (df["close"].sub(lv).abs() <= touch_buffer)
@@ -1351,6 +2491,51 @@ if news_df is not None and not news_df.empty:
         st.warning(f"[event windows] フォールバックします: {err or '列不足'}")
 else:
     st.info("イベント情報なし（抑制は無効）")
+
+# --- 重要イベントの自動強化（ハード化/窓拡大）---
+try:
+    if 'auto_harden' in locals() and auto_harden and (news_df is not None) and not news_df.empty:
+        # 今から見て前後の一定時間は、最低限のハード窓を確保
+        now = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index)>0 else pd.Timestamp.now(tz=JST)
+        # 対象イベント: 重要度4以上、これから±window内
+        near = news_df[news_df['importance'] >= 4]
+        if not near.empty:
+            before = pd.Timedelta(minutes=int(auto_harden_min_before))
+            after  = pd.Timedelta(minutes=int(auto_harden_min_after))
+            # 未来・直近のイベントを中心に追加の窓を作る
+            rows = []
+            for _, r in near.iterrows():
+                t = r['time']
+                if pd.isna(t):
+                    continue
+                rows.append({"start": t - before, "end": t + after, "importance": int(r['importance']), "title": r.get('title','')})
+            if rows:
+                extra = pd.DataFrame(rows)
+                if not windows_df.empty:
+                    windows_df = pd.concat([windows_df, extra], ignore_index=True)
+                else:
+                    windows_df = extra
+                windows_df = windows_df.sort_values('start').reset_index(drop=True)
+                # ハード抑制がOFFでも自動で一時ONにする（事故防止）
+                st.session_state['apply_news_filter'] = True
+                st.info("重要イベント前後は自動でハード抑制を強化しています（設定で無効可）")
+except Exception as e:
+    st.warning(f"自動強化処理で問題が発生: {e}")
+
+# --- ニュース設定を session_state に同期（合成θ/サマリで参照） ---
+st.session_state['news_win'] = news_win
+st.session_state['news_imp_min'] = news_imp_min
+st.session_state['news_filter_mode'] = news_filter_mode
+st.session_state['use_soft_suppress'] = bool('use_soft_suppress' in locals() and use_soft_suppress)
+st.session_state['apply_news_filter'] = bool('apply_news_filter' in locals() and apply_news_filter)
+st.session_state['theta_bump_in_news'] = st.session_state.get('theta_bump_in_news', 0.03)
+st.session_state['windows_df'] = windows_df
+
+# --- ページ上部にメタ統合サマリを表示 ---
+try:
+    render_meta_summary(df, windows_df, meta)
+except Exception as e:
+    st.warning(f"サマリ表示で問題が発生: {e}")
 
 # ---------------- パターン検出（Triangle / Rectangle / Double / Flag / Pennant / H&S） ----------------
 @dataclass
@@ -3639,17 +4824,99 @@ else:
     st.info("レベルが検出されていません。eps/min_samples/look を調整してください。")
 
 # ---------------- 期待pips（水平線ブレイクの過去平均） ----------------
+
+def _collect_trades_range_horizontal(df: pd.DataFrame,
+                                     start_i: int,
+                                     end_i: int,
+                                     fwd_n: int,
+                                     break_buffer: float,
+                                     spread_pips: float,
+                                     news_win: int,
+                                     news_imp_min: int,
+                                     apply_news: bool,
+                                     retest_wait_k: int,
+                                     touch_buffer: float) -> list:
+    """backtest_rolling の for ループから、水平線ブレイク(終値) 部分だけを切り出した差分収集。
+    start_i (inclusive) ～ end_i (exclusive) の i について追加トレード行を返す。
+    """
+    if end_i <= start_i:
+        return []
+    rows = []
+    pv_local = pip_value("USDJPY")
+    close_s = df["close"]
+    for i in range(start_i, end_i):
+        past = df.iloc[:i+1]
+        t = past.index[-1]
+        c  = float(past["close"].iloc[-1])
+        l1 = float(past["low"].iloc[-2]); h1 = float(past["high"].iloc[-2])
+
+        if apply_news:
+            win_df_past = _get_news_windows_until_cached(t, news_imp_min)
+            if _is_suppressed_at(t, win_df_past, news_win, news_imp_min, "水平線ブレイク(終値)"):
+                continue
+
+        # レベル抽出（過去のみ）
+        try:
+            piv_hi_past, piv_lo_past = swing_pivots(past, look)
+            lvls_past = horizontal_levels(piv_hi_past, piv_lo_past, eps=eps, min_samples=min_samples)
+        except Exception:
+            lvls_past = []
+
+        for lv in lvls_past:
+            # 上方向
+            if (c > lv + break_buffer) and (l1 <= lv):
+                entry = c; exitp = float(df["close"].iloc[i+fwd_n])
+                ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k), float(touch_buffer))
+                rows.append(dict(time=t, mode="水平ブレイク上", level_or_val=float(lv),
+                                 dir="long", entry=entry, exit=exitp,
+                                 ret_pips=(exitp-entry)/pv_local - spread_pips,
+                                 retest_index=ri, retest_hit=rh))
+            # 下方向
+            if (c < lv - break_buffer) and (h1 >= lv):
+                entry = c; exitp = float(df["close"].iloc[i+fwd_n])
+                ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k), float(touch_buffer))
+                rows.append(dict(time=t, mode="水平ブレイク下", level_or_val=float(lv),
+                                 dir="short", entry=entry, exit=exitp,
+                                 ret_pips=(entry-exitp)/pv_local - spread_pips,
+                                 retest_index=ri, retest_hit=rh))
+    return rows
+
+
 def compute_expected_pips_table_for_levels(df, levels, fwd_n, break_buffer, spread_pips,
                                            news_df, news_win, news_imp_min, apply_news_filter,
                                            touch_buffer, retest_wait_k) -> tuple:
+    """差分集計版 期待pipsテーブル計算（水平線ブレイク）。
+
+    キャッシュ構造 (st.session_state['ev_diff_cache']):
+        (params_sig, last_i, prev_bar_len, agg_dict)
+        agg_dict: {(level, dir): [sum_ret_pips, count]}
+
+    増分ロジック:
+        新しいバー到着で len(df) 増加時、評価対象 i 範囲 [last_i+1, len(df)-fwd_n) を差分計算。
+        fwd_n の未来参照特性により end_i = len(df)-fwd_n が現在確定している最終 i。
+    フォールバック条件:
+        - キャッシュなし / パラメタ変更 / バー長後退 / ギャップ (bar 増加 > fwd_n*2) 等
+        → フル backtest_rolling で再構築。
     """
-    水平線ごとの期待pipsテーブルと方向別集計を返す
-    Returns:
-        by_level_dir: pd.DataFrame or None
-        by_dir: pd.DataFrame or None
-    """
-    try:
-        # levels 引数は互換のために残すが、ローリングで毎バー再計算される
+    cache_key = "ev_diff_cache"
+    # 署名拡張: レベル/回帰/チャネル関連パラメタも含める
+    params_sig = (
+        fwd_n, break_buffer, spread_pips,
+        news_win, news_imp_min, int(apply_news_filter),
+        touch_buffer, retest_wait_k,
+        look, eps, min_samples, reg_lookback, chan_k
+    )
+
+    bar_len = len(df)
+    if bar_len <= fwd_n + 2:
+        return None, None
+
+    state = st.session_state.get(cache_key)
+
+    # min_start は backtest_rolling と同様に計算
+    min_start = max(2, reg_lookback, look * 4)
+
+    def _build_from_full():
         bt = backtest_rolling(
             df=df,
             fwd_n=fwd_n,
@@ -3663,15 +4930,164 @@ def compute_expected_pips_table_for_levels(df, levels, fwd_n, break_buffer, spre
             touch_buffer=touch_buffer
         )
         if bt is None or bt.empty:
+            st.session_state[cache_key] = (params_sig, min_start-1, bar_len, {})
             return None, None
-        by_level_dir = (bt.groupby(["level_or_val","dir"])["ret_pips"]
-                          .agg(avg="mean", n="count").reset_index()
-                          .rename(columns={"level_or_val":"level"}))
-        by_dir = (bt.groupby("dir")["ret_pips"].agg(avg="mean", n="count").reset_index())
+        agg = {}
+        for (lv, d), g in bt.groupby(["level_or_val", "dir"]):
+            s = g["ret_pips"].sum(); c = len(g)
+            # 新形式: [sum, count, last_hit_i]
+            agg[(float(lv), d)] = [float(s), int(c), 0]
+        last_i = bar_len - fwd_n - 1  # フル計算時点で確定している最大 i
+        for k in agg.keys():
+            agg[k][2] = last_i
+        st.session_state[cache_key] = (params_sig, last_i, bar_len, agg)
+        return _agg_to_frames(agg)
+
+    def _agg_to_frames(agg_dict):
+        if not agg_dict:
+            return None, None
+        rows_level = []
+        for (lv, d), vals in agg_dict.items():
+            if len(vals) == 2:
+                s, c = vals
+            else:
+                s, c, _lh = vals
+            if c > 0:
+                rows_level.append(dict(level=lv, dir=d, avg=s/c, n=c))
+        if not rows_level:
+            return None, None
+        import pandas as _pd
+        by_level_dir = _pd.DataFrame(rows_level)
+        by_dir = (by_level_dir.groupby("dir")
+                                .apply(lambda g: _pd.Series(dict(avg=(g['avg']*g['n']).sum()/g['n'].sum(), n=g['n'].sum())))
+                                .reset_index())
+        # 整列（オプション）
+        by_level_dir = by_level_dir.sort_values("avg", ascending=False)
         return by_level_dir, by_dir
-    except Exception as e:
-        # エラー時はNoneを返す（UI用途）
-        return None, None
+
+    # フォールバック条件判定
+    fallback = False
+    if state is None:
+        fallback = True
+    else:
+        prev_sig, last_i, prev_bar_len, agg = state
+        if prev_sig != params_sig:
+            fallback = True
+        elif bar_len < prev_bar_len:  # データ巻き戻り
+            fallback = True
+        elif bar_len - prev_bar_len > fwd_n * 2:  # かなりギャップ（安全のため）
+            fallback = True
+
+    import time, hashlib
+    stats = st.session_state.setdefault('ev_stats', {
+        'fallback_count': 0,
+        'diff_fail_count': 0,
+        'last_mode': None,
+        'last_elapsed_ms': None,
+        'last_added_trades': 0,
+        'agg_size': 0,
+        'params_sig_hash': None,
+    })
+
+    if fallback:
+        t0 = time.time()
+        try:
+            frames = _build_from_full()
+            elapsed = (time.time() - t0) * 1000
+            stats.update({
+                'fallback_count': stats.get('fallback_count',0) + 1,
+                'last_mode': 'full',
+                'last_elapsed_ms': elapsed,
+                'last_added_trades': None,
+                'agg_size': len(st.session_state.get(cache_key,(None,None,None,{}))[3]) if st.session_state.get(cache_key) else 0,
+                'params_sig_hash': hashlib.sha1(repr(params_sig).encode()).hexdigest()[:10]
+            })
+            return frames
+        except Exception:
+            stats['diff_fail_count'] += 1
+            return None, None
+
+    # 差分処理
+    prev_sig, last_i, prev_bar_len, agg = state
+    end_i_exclusive = bar_len - fwd_n
+    start_i = max(min_start, last_i + 1)
+
+    if start_i < end_i_exclusive:
+        import time, hashlib
+        t0 = time.time()
+        try:
+            new_rows = _collect_trades_range_horizontal(
+                df=df,
+                start_i=start_i,
+                end_i=end_i_exclusive,
+                fwd_n=fwd_n,
+                break_buffer=break_buffer,
+                spread_pips=spread_pips,
+                news_win=news_win,
+                news_imp_min=news_imp_min,
+                apply_news=apply_news_filter,
+                retest_wait_k=retest_wait_k,
+                touch_buffer=touch_buffer,
+            )
+            add_cnt = 0
+            for r in new_rows:
+                key = (float(r["level_or_val"]), r["dir"]) 
+                existing = agg.get(key)
+                if existing is None:
+                    agg[key] = [float(r["ret_pips"]), 1, end_i_exclusive-1]
+                else:
+                    if len(existing) == 2:
+                        s, c = existing
+                        agg[key] = [s + float(r["ret_pips"]), c + 1, end_i_exclusive-1]
+                    else:
+                        s, c, lh = existing
+                        agg[key] = [s + float(r["ret_pips"]), c + 1, end_i_exclusive-1]
+                add_cnt += 1
+            last_i = end_i_exclusive - 1
+            # TTL プルーニング
+            ttl = int(st.session_state.get('level_ttl_bars', 800))
+            pruned = 0
+            if ttl > 0:
+                to_del = []
+                for k, vals in agg.items():
+                    if len(vals) < 3:
+                        continue
+                    _s, _c, lh = vals
+                    if last_i - lh > ttl:
+                        to_del.append(k)
+                for k in to_del:
+                    del agg[k]
+                pruned = len(to_del)
+            st.session_state[cache_key] = (params_sig, last_i, bar_len, agg)
+            elapsed = (time.time() - t0) * 1000
+            stats.update({
+                'last_mode': 'diff',
+                'last_elapsed_ms': elapsed,
+                'last_added_trades': add_cnt,
+                'agg_size': len(agg),
+                'params_sig_hash': hashlib.sha1(repr(params_sig).encode()).hexdigest()[:10],
+                'pruned_last': pruned,
+                'pruned_total': stats.get('pruned_total', 0) + pruned,
+            })
+        except Exception:
+            stats['diff_fail_count'] += 1
+            # 差分計算失敗時はフル再計算にフォールバック
+            t0 = time.time()
+            try:
+                frames = _build_from_full()
+                elapsed = (time.time() - t0) * 1000
+                stats.update({
+                    'last_mode': 'full(fallback)',
+                    'last_elapsed_ms': elapsed,
+                    'last_added_trades': None,
+                    'agg_size': len(st.session_state.get(cache_key,(None,None,None,{}))[3]) if st.session_state.get(cache_key) else 0,
+                    'params_sig_hash': hashlib.sha1(repr(params_sig).encode()).hexdigest()[:10]
+                })
+                return frames
+            except Exception:
+                return None, None
+    # start_i >= end_i_exclusive の場合は新規 i なし → そのまま再利用
+    return _agg_to_frames(agg)
 
 # ---------------- 「今からのブレイク確率」＋ 期待値ランキング ----------------
 if show_break_prob:
@@ -3689,7 +5105,8 @@ if show_break_prob:
                 use_levels = [levels[0]] if levels else []
             try:
                 # 水平線ブレイク確率テーブルの計算
-                prob_df = build_level_break_prob_table(
+                from build_level_break_prob_table import build_level_break_prob_table_cached
+                prob_df = build_level_break_prob_table_cached(
                     df=df,
                     ts_now=None,  # ts_nowは使わないためNoneで明示
                     use_levels=use_levels,
@@ -3699,18 +5116,102 @@ if show_break_prob:
                     meta=meta,
                     make_features_for_level=make_features_for_level,  # 特徴量生成関数
                     predict_with_session_theta=predict_with_session_theta,  # モデル推論関数
+                    cache=True,
                 )
+                # Adaptive θ 用: 確率履歴更新と θ 再計算
+                st.session_state.setdefault('prob_history', [])
+                if prob_df is not None and not prob_df.empty:
+                    for _, rr in prob_df.iterrows():
+                        for pk in ["P_up", "P_dn"]:
+                            pv = rr.get(pk, None)
+                            if isinstance(pv, (int,float)) and not np.isnan(pv):
+                                st.session_state['prob_history'].append((float(pv), pd.Timestamp.utcnow()))
+                    # バッファ上限
+                    st.session_state['prob_history'] = st.session_state['prob_history'][-3000:]
+                # 価格履歴更新 (ATR 用) ※ close 列が存在すると仮定
+                st.session_state.setdefault('recent_closes', [])
+                if 'close' in df.columns:
+                    st.session_state['recent_closes'].extend(list(df['close'].iloc[-5:]))  # 末尾を少量追記
+                    st.session_state['recent_closes'] = st.session_state['recent_closes'][-5000:]
+                # θ 更新
+                adaptive_theta_val = update_adaptive_theta(st.session_state['prob_history'], window=300)
+                st.session_state['theta_current'] = adaptive_theta_val if st.session_state.get('use_adaptive_theta') else st.session_state.get('theta_base', 0.60)
             except Exception as e:
                 import traceback
                 st.error(f"ブレイク確率テーブルの計算でエラー: {e}")
                 st.error(traceback.format_exc())  # 詳細なエラー情報も表示
                 prob_df = None
 
-            ev_table, ev_dir = compute_expected_pips_table_for_levels(
-                df, levels, fwd_n, break_buffer, spread_pips,
-                news_df, news_win, news_imp_min, apply_news_filter,
-                touch_buffer, retest_wait_k
+            ev_params = dict(
+                fwd_n=fwd_n,
+                break_buffer=break_buffer,
+                spread_pips=spread_pips,
+                news_df=news_df,
+                news_win=news_win,
+                news_imp_min=news_imp_min,
+                apply_news_filter=apply_news_filter,
+                touch_buffer=touch_buffer,
+                retest_wait_k=retest_wait_k,
             )
+            ev_table, ev_dir, ev_meta = get_ev_tables(
+                df=df,
+                levels=levels,
+                params=ev_params,
+                compute_fn=compute_expected_pips_table_for_levels,
+                min_recompute_interval=3.0,
+                max_bar_lookback_skip=1,
+            )
+
+            # EV 計算メタ情報表示
+            with st.expander("EV計算メタ", expanded=False):
+                stats = st.session_state.get('ev_stats', {})
+                st.write({
+                    'last_mode': stats.get('last_mode'),
+                    'last_elapsed_ms': stats.get('last_elapsed_ms'),
+                    'last_added_trades': stats.get('last_added_trades'),
+                    'agg_size': stats.get('agg_size'),
+                    'fallback_count': stats.get('fallback_count'),
+                    'diff_fail_count': stats.get('diff_fail_count'),
+                    'params_sig_hash': stats.get('params_sig_hash'),
+                    'pruned_last': stats.get('pruned_last'),
+                    'pruned_total': stats.get('pruned_total'),
+                })
+                # ニュースキャッシュ統計
+                nstats = st.session_state.get('news_stats', {})
+                if nstats:
+                    st.write({'news_cache_hits': nstats.get('hits'), 'news_cache_miss': nstats.get('miss'), 'news_cache_size': nstats.get('size')})
+                    if st.button("ニュースキャッシュクリア"):
+                        st.session_state.pop('news_win_cache', None)
+                        st.session_state.pop('news_stats', None)
+                        st.info("news_win_cache をクリアしました。")
+                if st.button("EVフル再計算 (キャッシュ無効化)"):
+                    st.session_state.pop('ev_diff_cache', None)
+                    st.success("ev_diff_cache を削除しました。次回は full rebuild になります。")
+                if st.button("EV統計リセット"):
+                    st.session_state.pop('ev_stats', None)
+                    st.info("ev_stats をリセットしました。")
+                st.session_state.setdefault('level_ttl_bars', 800)
+                ttl_new = st.number_input("レベルTTL (bars)", 100, 5000, int(st.session_state['level_ttl_bars']), 50,
+                                           help="最後にトレード発生した bar からこれを超えると集計から削除")
+                if ttl_new != st.session_state['level_ttl_bars']:
+                    st.session_state['level_ttl_bars'] = int(ttl_new)
+                    st.info(f"TTL を {ttl_new} に更新。次の差分サイクルで適用。")
+                if st.button("手動Prune実行"):
+                    cache = st.session_state.get('ev_diff_cache')
+                    if cache:
+                        psig, li, bl, agg = cache
+                        ttl = int(st.session_state['level_ttl_bars'])
+                        to_del=[]
+                        for k, vals in list(agg.items()):
+                            if len(vals) < 3:
+                                continue
+                            _s,_c,lh = vals
+                            if li - lh > ttl:
+                                to_del.append(k)
+                        for k in to_del:
+                            del agg[k]
+                        st.session_state['ev_diff_cache'] = (psig, li, bl, agg)
+                        st.success(f"Prune: {len(to_del)} 件削除")
 
             def get_expected_for(level, direction):
                 if ev_table is not None and not ev_table.empty:
@@ -3741,6 +5242,33 @@ if show_break_prob:
                 # 最良の方向と期待値を決定
                 best_dir = BUY if ev_up >= ev_dn else SELL
                 best_ev  = ev_up if ev_up >= ev_dn else ev_dn
+                # Risk guard 判定（レベル単位ではなくグローバル判定。必要なら方向別で2回呼び出し可）
+                risk_allowed = True
+                risk_reason = "ok"
+                tg = st.session_state.get("trade_guard")
+                if tg is not None:
+                    # セッション名推定（既存 meta の theta_by_session 形式に倣う）
+                    now_jst = pd.Timestamp.now(tz="Asia/Tokyo")
+                    h = now_jst.hour
+                    if 9 <= h < 15:
+                        sess = "Tokyo"
+                    elif 16 <= h < 24:
+                        sess = "London"
+                    elif h >= 22 or h < 5:
+                        sess = "NY"
+                    else:
+                        sess = None
+                    allow, msg = tg.allow_new_trade(ts=now_jst, session=sess)
+                    risk_allowed = bool(allow)
+                    risk_reason = msg
+                reason_map = {
+                    "ok": "許可",
+                    "in_cooldown": "クールダウン中",
+                    "daily_trade_limit": "日次上限到達",
+                    "session_trade_limit": "セッション上限到達",
+                    "atr_spike_halt": "ボラ急変停止",
+                }
+                risk_reason_jp = reason_map.get(risk_reason, risk_reason)
                 exp_rows.append({
                     "level": lv,
                     "P_up": r.get("P_up", 0),
@@ -3754,6 +5282,9 @@ if show_break_prob:
                     "samples_up": n_up,
                     "samples_dn": n_dn,
                     "cost_pips": extra_cost_pips,  # 透明性のため列に残す
+                    "risk_allowed": risk_allowed,
+                    "risk_reason": risk_reason,
+                    "risk_reason_jp": risk_reason_jp,
                 })
 
             # 期待値ランキング表の表示
@@ -3761,8 +5292,9 @@ if show_break_prob:
                        .sort_values("best_EV", ascending=False)
                        .reset_index(drop=True))
 
+            cols_show = ["level","P_up","P_dn","E_pips_up","E_pips_dn","EV_up","EV_dn","best_action","best_EV","samples_up","samples_dn","risk_allowed","risk_reason_jp"]
             st.dataframe(
-                ev_df[["level","P_up","P_dn","E_pips_up","E_pips_dn","EV_up","EV_dn","best_action","best_EV","samples_up","samples_dn"]]
+                ev_df[cols_show]
                     .style.format({
                         "level":"{:.3f}",
                         "P_up":"{:.1%}","P_dn":"{:.1%}",
@@ -3771,6 +5303,304 @@ if show_break_prob:
                         "best_EV":"{:.2f}"
                     })
             )
+            if 'ev_meta' in locals():
+                status = 'cache hit' if ev_meta.get('cache_hit') else 'recompute'
+                if ev_meta.get('skipped'):
+                    status += ' (skipped)'
+                extra = ''
+                if ev_meta.get('reason'):
+                    extra = f" | {ev_meta['reason']}"
+                st.caption(f"EV計算: {status} / {ev_meta.get('elapsed',0):.4f}s{extra}")
+
+            # ---- Pending（リテスト待ち）管理・表示 ----
+            st.session_state.setdefault('pending_trades', [])
+            # 設定（軽量UIパラメタ）
+            st.session_state.setdefault('pending_merge_eps_pips', 1.0)  # マージ閾値（pips）
+            st.session_state.setdefault('pending_ttl_extra_bars', 0)    # 追加TTL（bars）
+            st.session_state.setdefault('enable_sl_tp', False)
+            st.session_state.setdefault('sl_pips', 10.0)
+            st.session_state.setdefault('tp_pips', 20.0)
+            st.session_state.setdefault('enable_trailing', False)
+            st.session_state.setdefault('trail_pips', 15.0)
+            st.session_state.setdefault('pending_strict_close', False)   # 二段条件: ヒゲ到達 AND 終値近接
+            # ATR連動オプション
+            st.session_state.setdefault('merge_eps_atr', False)
+            st.session_state.setdefault('merge_eps_k', 0.0)
+            st.session_state.setdefault('ttl_atr', False)
+            st.session_state.setdefault('ttl_k', 0.0)
+            st.session_state.setdefault('sl_tp_atr', False)
+            st.session_state.setdefault('sl_k', 0.0)
+            st.session_state.setdefault('tp_k', 0.0)
+            st.session_state.setdefault('trail_atr', False)
+            st.session_state.setdefault('trail_k', 0.0)
+
+            def _ensure_pending(level: float, direction: str, open_i: int, expiry_i: int):
+                # 既存の同一レベル・方向の pending/open は重複登録しない
+                for p in st.session_state['pending_trades']:
+                    if float(p.get('level')) == float(level) and p.get('dir') == direction and p.get('status') in ('pending','open'):
+                        return
+                st.session_state['pending_trades'].append({
+                    'level': float(level), 'dir': direction, 'status': 'pending',
+                    'open_i': int(open_i), 'expiry_i': int(expiry_i),
+                    'created_i': int(open_i)
+                })
+
+            def _merge_pending(eps_pips: float):
+                """同一方向・近接レベルの pending をマージ（古い方を優先）。open は対象外。"""
+                lst = st.session_state['pending_trades']
+                if not lst: return
+                pv = pip_value("USDJPY")
+                eps = float(eps_pips) * pv
+                kept = []
+                for p in sorted(lst, key=lambda x: (x.get('status')!='pending', x.get('created_i', 1<<30))):
+                    if p.get('status') != 'pending':
+                        kept.append(p); continue
+                    merged = False
+                    for q in kept:
+                        if q.get('status')=='pending' and q.get('dir')==p.get('dir') and abs(float(q.get('level'))-float(p.get('level'))) <= eps:
+                            # 古い q を残し、p を捨てる
+                            merged = True
+                            break
+                    if not merged:
+                        kept.append(p)
+                st.session_state['pending_trades'] = kept
+
+            # 現在バーでの更新処理
+            i_cur = len(df) - 1
+            if i_cur >= 1:
+                t_now = df.index[-1]
+                c_now = float(df['close'].iloc[-1])
+                h_now = float(df['high'].iloc[-1]); l_now = float(df['low'].iloc[-1])
+                l_prev = float(df['low'].iloc[-2]); h_prev = float(df['high'].iloc[-2])
+                # ATR (pips)
+                pv_local = pip_value("USDJPY")
+                try:
+                    atr_val = float(atr(df, 14).iloc[-1]) if len(df) >= 14 else float(df['high'].iloc[-1] - df['low'].iloc[-1])
+                except Exception:
+                    atr_val = float(df['high'].iloc[-1] - df['low'].iloc[-1])
+                atr_pips = atr_val / pv_local if pv_local else 0.0
+                # 実効パラメタ（ATR連動適用）
+                eff_merge_eps_pips = float(st.session_state['pending_merge_eps_pips']) + (float(st.session_state.get('merge_eps_k',0.0))*atr_pips if st.session_state.get('merge_eps_atr') else 0.0)
+                eff_ttl_extra = int(st.session_state['pending_ttl_extra_bars']) + (int(st.session_state.get('ttl_k',0.0) * atr_pips) if st.session_state.get('ttl_atr') else 0)
+                eff_sl_pips = float(st.session_state['sl_pips']) + (float(st.session_state.get('sl_k',0.0))*atr_pips if st.session_state.get('sl_tp_atr') else 0.0)
+                eff_tp_pips = float(st.session_state['tp_pips']) + (float(st.session_state.get('tp_k',0.0))*atr_pips if st.session_state.get('sl_tp_atr') else 0.0)
+                eff_trail_pips = float(st.session_state['trail_pips']) + (float(st.session_state.get('trail_k',0.0))*atr_pips if st.session_state.get('trail_atr') else 0.0)
+
+                # ニュース抑制（現在時点）
+                if apply_news_filter:
+                    _win_now = _get_news_windows_until_cached(t_now, news_imp_min)
+                    suppressed_now = _is_suppressed_at(t_now, _win_now, news_win, news_imp_min, "水平線ブレイク(終値)")
+                else:
+                    suppressed_now = False
+
+                # 期限切れ処理
+                for p in st.session_state['pending_trades']:
+                    if p.get('status') == 'pending' and i_cur > int(p.get('expiry_i', -1)):
+                        p['status'] = 'expired'
+                        p['closed_i'] = i_cur
+
+                # 新規ブレイク → pending 追加（K>0 のとき）
+                if not suppressed_now and int(retest_wait_k) > 0:
+                    for lv in levels:
+                        up_break = (c_now > lv + break_buffer) and (l_prev <= lv)
+                        dn_break = (c_now < lv - break_buffer) and (h_prev >= lv)
+                        if up_break:
+                            extra = int(eff_ttl_extra)
+                            _ensure_pending(lv, 'long', i_cur, i_cur + int(retest_wait_k) + extra)
+                        if dn_break:
+                            extra = int(eff_ttl_extra)
+                            _ensure_pending(lv, 'short', i_cur, i_cur + int(retest_wait_k) + extra)
+
+                # 近接 pending のマージ
+                _merge_pending(eff_merge_eps_pips)
+
+                # リテスト成立（現在バーで指値到達）→ open
+                for p in st.session_state['pending_trades']:
+                    if p.get('status') == 'pending' and i_cur >= int(p.get('open_i', 0)) and i_cur <= int(p.get('expiry_i', 0)):
+                        lv = float(p['level'])
+                        if not suppressed_now:
+                            hit = False
+                            if p.get('dir') == 'long':
+                                hit = (l_now <= lv + float(touch_buffer))
+                            else:
+                                hit = (h_now >= lv - float(touch_buffer))
+                            if st.session_state.get('pending_strict_close'):
+                                hit = hit and (abs(c_now - lv) <= float(touch_buffer))
+                            if hit:
+                                p['status'] = 'open'
+                                p['entry_i'] = i_cur
+                                p['entry_price'] = c_now
+                                p['exit_i'] = i_cur + int(fwd_n)
+
+                # open → closed（決済）
+                st.session_state.setdefault('pending_history', [])
+                pv = pip_value("USDJPY")
+                for p in st.session_state['pending_trades']:
+                    if p.get('status') == 'open':
+                        ex_i = int(p.get('exit_i', 1<<30))
+                        direction = p.get('dir')
+                        entry_price = float(p.get('entry_price', c_now))
+                        # SL/TP/Trailing の早期クローズ判定
+                        reason = None
+                        if st.session_state.get('enable_sl_tp'):
+                            sl_p = float(eff_sl_pips) * pv
+                            tp_p = float(eff_tp_pips) * pv
+                            if direction == 'long':
+                                if l_now <= entry_price - sl_p:
+                                    reason = 'sl'
+                                elif h_now >= entry_price + tp_p:
+                                    reason = 'tp'
+                            else:
+                                if h_now >= entry_price + sl_p:
+                                    reason = 'sl'
+                                elif l_now <= entry_price - tp_p:
+                                    reason = 'tp'
+                        if reason is None and st.session_state.get('enable_trailing'):
+                            trail_p = float(eff_trail_pips) * pv
+                            # 最高/最低有利値を更新
+                            if direction == 'long':
+                                best = float(p.get('best_high', entry_price))
+                                best = max(best, h_now)
+                                p['best_high'] = best
+                                trail_stop = best - trail_p
+                                p['trail_stop'] = trail_stop
+                                if l_now <= trail_stop:
+                                    reason = 'trail'
+                            else:
+                                best = float(p.get('best_low', entry_price))
+                                best = min(best, l_now)
+                                p['best_low'] = best
+                                trail_stop = best + trail_p
+                                p['trail_stop'] = trail_stop
+                                if h_now >= trail_stop:
+                                    reason = 'trail'
+                        # 規定の exit_i 到達 or ルール成立でクローズ
+                        do_close = False
+                        exit_price = c_now
+                        if reason is not None:
+                            do_close = True
+                        elif ex_i < len(df) and i_cur >= ex_i:
+                            exit_price = float(df['close'].iloc[ex_i])
+                            reason = 'time'
+                            do_close = True
+                        if do_close:
+                            if direction == 'long':
+                                realized = (exit_price - entry_price)/pv - float(spread_pips)
+                            else:
+                                realized = (entry_price - exit_price)/pv - float(spread_pips)
+                            p['status'] = 'closed'
+                            p['closed_i'] = i_cur if reason!='time' else ex_i
+                            p['exit_price'] = exit_price
+                            p['realized_pips'] = float(realized)
+                            p['close_reason'] = reason
+                            st.session_state['pending_history'].append({
+                                'level': float(p['level']), 'dir': direction,
+                                'entry_i': int(p.get('entry_i', i_cur)), 'exit_i': p.get('closed_i'),
+                                'entry_price': entry_price, 'exit_price': exit_price,
+                                'realized_pips': float(realized), 'reason': reason,
+                            })
+
+            # 表示用テーブル組立
+            extra_cost = float(extra_cost_pips) if 'extra_cost_pips' in locals() else 0.0
+            pend_rows = []
+            def _get_prob_for(level: float, direction: str):
+                if prob_df is None or prob_df.empty:
+                    return float('nan')
+                sub = prob_df[prob_df['level'] == float(level)]
+                if sub.empty:
+                    return float('nan')
+                return float(sub['P_up' if direction=='long' else 'P_dn'].iloc[0])
+
+            for p in st.session_state['pending_trades']:
+                if p.get('status') in ('pending','open'):
+                    lv = float(p['level']); direction = p['dir']
+                    E, N = get_expected_for(lv, 'long' if direction=='long' else 'short')
+                    E_net = (E - extra_cost) if E is not None else 0.0
+                    P = _get_prob_for(lv, direction)
+                    EV_ref = (P * E_net) if (not np.isnan(P)) else float('nan')
+                    pend_rows.append({
+                        'level': lv,
+                        'dir': direction,
+                        'status': p.get('status'),
+                        'since_bars': max(0, i_cur - int(p.get('open_i', i_cur))) if i_cur is not None else None,
+                        'bars_left': max(0, int(p.get('expiry_i', i_cur)) - i_cur) if i_cur is not None and p.get('status')=='pending' else None,
+                        'entry_i': p.get('entry_i'),
+                        'exit_i': p.get('exit_i'),
+                        'E_pips_ref': E_net,
+                        'P_dir_ref': P,
+                        'EV_ref': EV_ref,
+                        'samples': N,
+                    })
+
+            with st.expander("Pending（リテスト待ち）", expanded=False):
+                if pend_rows:
+                    _pdf = pd.DataFrame(pend_rows)
+                    st.dataframe(
+                        _pdf[["level","dir","status","since_bars","bars_left","E_pips_ref","P_dir_ref","EV_ref","samples"]]
+                            .style.format({
+                                "level": "{:.3f}", "E_pips_ref": "{:.2f}", "P_dir_ref": "{:.1%}", "EV_ref": "{:.2f}"
+                            })
+                    )
+                else:
+                    st.caption("現在、保有中のPendingはありません。")
+                cols = st.columns(3)
+                if cols[0].button("Pending全クリア"):
+                    st.session_state['pending_trades'] = []
+                    st.info("Pending をクリアしました。")
+                # ポリシー調整
+                st.write("— Pending管理ポリシー —")
+                pm = cols[1].number_input("マージ閾値(pips)", 0.0, 10.0, float(st.session_state.get('pending_merge_eps_pips', 1.0)), 0.1)
+                pe = cols[2].number_input("追加TTL(bars)", 0, 500, int(st.session_state.get('pending_ttl_extra_bars', 0)), 1)
+                if pm != st.session_state['pending_merge_eps_pips']:
+                    st.session_state['pending_merge_eps_pips'] = float(pm)
+                    st.info("次バーからマージ閾値を適用します。")
+                if pe != st.session_state['pending_ttl_extra_bars']:
+                    st.session_state['pending_ttl_extra_bars'] = int(pe)
+                    st.info("次のpending生成から追加TTLを適用します。")
+                strict = st.checkbox("二段条件: ヒゲ到達 AND 終値近接", value=bool(st.session_state.get('pending_strict_close', False)))
+                st.session_state['pending_strict_close'] = bool(strict)
+                st.write("— ATR連動 —")
+                cA, cB = st.columns(2)
+                st.session_state['merge_eps_atr'] = bool(cA.checkbox("マージ閾値をATR連動", value=bool(st.session_state.get('merge_eps_atr', False))))
+                st.session_state['merge_eps_k'] = float(cB.number_input("merge_eps_k", 0.0, 5.0, float(st.session_state.get('merge_eps_k', 0.0)), 0.1))
+                cC, cD = st.columns(2)
+                st.session_state['ttl_atr'] = bool(cC.checkbox("TTL追加をATR連動", value=bool(st.session_state.get('ttl_atr', False))))
+                st.session_state['ttl_k'] = float(cD.number_input("ttl_k", 0.0, 50.0, float(st.session_state.get('ttl_k', 0.0)), 1.0))
+                st.write("— 決済ルール —")
+                en_st = st.checkbox("SL/TPを有効化", value=bool(st.session_state.get('enable_sl_tp', False)))
+                st.session_state['enable_sl_tp'] = bool(en_st)
+                c1, c2, c3 = st.columns(3)
+                st.session_state['sl_pips'] = float(c1.number_input("SL(pips)", 0.0, 100.0, float(st.session_state.get('sl_pips', 10.0)), 0.5))
+                st.session_state['tp_pips'] = float(c2.number_input("TP(pips)", 0.0, 200.0, float(st.session_state.get('tp_pips', 20.0)), 0.5))
+                en_tr = c3.checkbox("トレーリング有効", value=bool(st.session_state.get('enable_trailing', False)))
+                st.session_state['enable_trailing'] = bool(en_tr)
+                st.session_state['trail_pips'] = float(st.number_input("トレーリング幅(pips)", 0.0, 200.0, float(st.session_state.get('trail_pips', 15.0)), 0.5))
+                cE, cF = st.columns(2)
+                st.session_state['sl_tp_atr'] = bool(cE.checkbox("SL/TPをATR連動", value=bool(st.session_state.get('sl_tp_atr', False))))
+                st.session_state['sl_k'] = float(cF.number_input("sl_k", 0.0, 5.0, float(st.session_state.get('sl_k', 0.0)), 0.1))
+                cG, cH = st.columns(2)
+                st.session_state['tp_k'] = float(cG.number_input("tp_k", 0.0, 10.0, float(st.session_state.get('tp_k', 0.0)), 0.1))
+                st.session_state['trail_atr'] = bool(cH.checkbox("トレールをATR連動", value=bool(st.session_state.get('trail_atr', False))))
+                st.session_state['trail_k'] = float(st.number_input("trail_k", 0.0, 10.0, float(st.session_state.get('trail_k', 0.0)), 0.1))
+                # 直近のクローズド履歴
+                hist = st.session_state.get('pending_history', [])
+                if hist:
+                    hdf = pd.DataFrame(hist)
+                    st.write("最近のクローズド（直近50件）")
+                    st.dataframe(
+                        hdf.tail(50)[["level","dir","entry_i","exit_i","entry_price","exit_price","realized_pips"]]
+                           .style.format({
+                               "level": "{:.3f}", "entry_price": "{:.3f}", "exit_price": "{:.3f}", "realized_pips": "{:.2f}"
+                           })
+                    )
+                    # サマリ
+                    rp = hdf["realized_pips"].astype(float)
+                    avgp = float(rp.mean()) if not rp.empty else 0.0
+                    winr = float((rp > 0).mean()) if not rp.empty else 0.0
+                    st.caption(f"Closed合計: {len(hdf)} | 平均pips: {avgp:.2f} | 勝率: {winr:.1%}")
+                    if cols[1].button("履歴クリア"):
+                        st.session_state['pending_history'] = []
+                        st.info("履歴をクリアしました。")
 
 # === 予測ブロック直後（P_up/P_dn を集計する箇所の後）に確率バッファ・PSI・θ超過率集計 ===
 def init_session_state_buffer():
@@ -3783,7 +5613,11 @@ def init_session_state_buffer():
     init_session_state_buffer()
 
     curr_probs = update_prob_buffer(prob_df)
-    psi_val, sev, ex_rate = calc_psi_and_exrate(curr_probs, baseline_probs, theta_up, theta_dn)
+    psi_val, sev, ex_rate, kl, js, hell = calc_psi_and_exrate(curr_probs, baseline_probs, theta_up, theta_dn)
+    st.session_state['drift_meta'] = {
+        'psi': psi_val, 'severity': sev, 'ex_rate': ex_rate,
+        'kl': kl, 'js': js, 'hellinger': hell,
+    }
 
     # 価格の最終時刻（JST想定のindex）を取得
     try:
@@ -3843,6 +5677,53 @@ def init_session_state_buffer():
 
 if show_ev_rank and not show_break_prob:
     st.info("期待値ランキングは「今からの水平線ブレイク確率」をONにすると表示されます。")
+
+# ---------------- メタ統合サマリ（EV/θ/ニュース/ペンディング） ----------------
+with st.expander("メタ統合サマリ", expanded=False):
+    # EVメタ
+    evs = st.session_state.get('ev_stats', {})
+    ev_mode = evs.get('last_mode')
+    ev_ms = evs.get('last_elapsed_ms')
+    ev_added = evs.get('last_added_trades')
+    ev_agg = evs.get('agg_size')
+    ev_pruned = evs.get('pruned_last')
+    # θメタ
+    theta_cur = st.session_state.get('theta_current')
+    use_adapt = st.session_state.get('use_adaptive_theta')
+    # ニュースキャッシュ
+    nstats = st.session_state.get('news_stats', {})
+    nh, nm, ns = nstats.get('hits'), nstats.get('miss'), nstats.get('size')
+    # Pending
+    pend = st.session_state.get('pending_trades', [])
+    pend_open = sum(1 for p in pend if p.get('status') == 'open')
+    pend_wait = sum(1 for p in pend if p.get('status') == 'pending')
+    phist = st.session_state.get('pending_history', [])
+    phn = len(phist)
+    avgp = None
+    try:
+        import pandas as _pd
+        if phist:
+            rp = _pd.Series([float(x.get('realized_pips', float('nan'))) for x in phist])
+            avgp = float(rp.mean()) if not rp.empty else None
+    except Exception:
+        avgp = None
+    # ドリフト（PSI/KL/JS/Hellinger）とガード状態
+    drift = st.session_state.get('drift_meta', {})
+    guard_state = {}
+    try:
+        tg = st.session_state.get('trade_guard')
+        if tg is not None:
+            guard_state = tg.snapshot() if hasattr(tg, 'snapshot') else {}
+    except Exception:
+        guard_state = {}
+    st.write({
+        'EV': {'mode': ev_mode, 'elapsed_ms': ev_ms, 'added': ev_added, 'agg_size': ev_agg, 'pruned_last': ev_pruned},
+        'Theta': {'adaptive_on': use_adapt, 'theta_current': theta_cur},
+        'NewsCache': {'hits': nh, 'miss': nm, 'size': ns},
+        'Pending': {'open': pend_open, 'waiting': pend_wait, 'closed_total': phn, 'closed_avg_pips': avgp},
+        'Drift': drift,
+        'Guard': guard_state
+    })
 
 # ---------------- パターンの「次の動きの予測」一覧（測定値ターゲット & EV） ----------------
 st.subheader("🧭 パターン検出：次の動きの予測（測定値ターゲット & EV）")
