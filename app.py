@@ -3858,209 +3858,75 @@ def session_onehot_feat(ts):
             1.0 if h>=22 or h<5 else 0.0)
 
 def make_features_for_level(df, ts, level, dir_sign, touch_buffer, trend_look=150):
-    feat = {}
-    features_list = [
-        "ret_1", "ret_4", "atr", "touch_density", "slope_long", "tokyo", "london", "ny", "ret_8", "ret_12",
-        "atr14_norm", "atr_ratio", "d_atr14", "range_pct", "body_ratio", "wick_up_ratio", "wick_dn_ratio", "slope_short_6",
-        "z_close_20", "sin_hour", "cos_hour", "touch_x_atr", "slope_long_x_ny", "ret_1_v", "ret_4_v", "ret_8_v", "ret_12_v",
-        "range_pct_v", "slope_short_6_v", "atr14_norm_v", "atr_ratio_56", "rv20", "reg_atr_low", "reg_atr_mid", "reg_atr_high",
-        "tokyo_x_range", "tokyo_x_touch", "london_x_range", "london_x_touch", "ny_x_range", "ny_x_touch", "touch_x_atr_v",
-        "touch_x_slope_v", "z_x_atr_v", "reg_low_x_z", "reg_low_x_slope_v", "reg_mid_x_z", "reg_mid_x_slope_v", "reg_high_x_z",
-        "reg_high_x_slope_v", "z_close_20_sq", "slope_short_6_v_sq", "ret_8_v_sq", "ret_12_v_sq", "dir", "dist_to_level",
-        "atr_slope_dir", "rsi_div_dir", "high_low_ratio_20", "atr_change_10"
-    ]
-    print(f"CALL make_features_for_level: df={df.shape}, ts={ts}, level={level}, dir_sign={dir_sign}")
-    print(f"features_list={features_list}")
-    filtered_feat = {k: feat.get(k, 0.0) for k in features_list}
-    print(f"filtered_feat keys={list(filtered_feat.keys())}, len={len(filtered_feat)}")
-    with open("filtered_feat_debug.txt", "a", encoding="utf-8") as dbg:
-        dbg.write(f"CALL make_features_for_level: df={getattr(df, 'shape', None)}, ts={ts}, level={level}, dir_sign={dir_sign}\n")
-    feat = {}
-    i = len(df)-1
-    c  = float(df["close"].iloc[i])
-    h  = float(df["high"].iloc[i])
-    l  = float(df["low"].iloc[i])
-    feat["dir"] = dir_sign
-    feat["dist_to_level"] = (c - level) * dir_sign
-    feat["diff_level_close"] = (c - level) * dir_sign
-    feat["recent_high"] = float(df["high"].iloc[max(0, i-10):i+1].max()) * dir_sign
-    feat["recent_low"] = float(df["low"].iloc[max(0, i-10):i+1].min()) * dir_sign
-    feat["above_level"] = 1.0 if c > level else 0.0
-    feat["below_level"] = 1.0 if c < level else 0.0
-    a = atr(df, 14).fillna(0.0).iloc[i]
-    feat["atr_norm"] = a / max(1e-6, c)
-    feat["atr_slope_dir"] = (atr(df, 14).diff().fillna(0.0).iloc[i]) * dir_sign
+    """
+    学習時と同一の前処理ポリシーに合わせて、
+    - metaの features を正とした列集合＆順序
+    - 欠損は0.0で埋める
+    - 方向差をきちんと残す（dir, dist_to_level, atr_slope_dir, rsi_div_dir等）
+    を満たす辞書を返します。
+    返り値: {feature_name: float, ...} で meta["features"] のキーをすべて含む。
+    """
+    # 直近バーのOHLC
+    i = len(df) - 1
+    c = float(df["close"].iloc[i])
+    h = float(df["high"].iloc[i])
+    l = float(df["low"].iloc[i])
+
+    # ベース特徴を最小限計算（残りは0埋め）
+    feat: dict[str, float] = {}
+    feat["dir"] = float(dir_sign)
+    feat["dist_to_level"] = float((c - float(level)) * float(dir_sign))
+    # ATR由来の簡易特徴
+    atr_series = atr(df, 14).fillna(0.0)
+    a_now = float(atr_series.iloc[i]) if len(atr_series) else 0.0
+    feat["atr_slope_dir"] = float((atr_series.diff().fillna(0.0).iloc[i]) * dir_sign) if len(atr_series) else 0.0
+    # RSI微分（あれば）
     if "rsi" in df.columns:
-        feat["rsi_div_dir"] = (df["rsi"].diff().fillna(0.0).iloc[i]) * dir_sign
+        feat["rsi_div_dir"] = float(df["rsi"].diff().fillna(0.0).iloc[i]) * float(dir_sign)
     else:
         feat["rsi_div_dir"] = 0.0
-    dist = abs(c - level)
-    feat["near"] = 1.0 / (dist + 1e-6)
-    Ntouch=200
-    sub = df.iloc[max(0, i-Ntouch):i+1]
-    touches = int((((sub["Low"]<=level)&(sub["High"]>=level)) | (sub["Close"].sub(level).abs()<=touch_buffer)).sum()) if "Low" in df.columns else int((((sub["low"]<=level)&(sub["high"]>=level)) | (sub["close"].sub(level).abs()<=touch_buffer)).sum())
-    feat["touches"] = touches
-    sess_tokyo, sess_london, sess_ny = session_onehot_feat(ts)
-    feat["tokyo"] = sess_tokyo
-    feat["london"] = sess_london
-    feat["ny"] = sess_ny
-    # --- 不足特徴量の追加 ---
-    # z_close_20_sq: z_close_20の2乗
-    if "z_close_20" in feat:
-        feat["z_close_20_sq"] = feat["z_close_20"] ** 2
-    else:
-        feat["z_close_20_sq"] = 0.0
-    # slope_short_6_v_sq: slope_short_6_vの2乗
-    if "slope_short_6_v" in feat:
-        feat["slope_short_6_v_sq"] = feat["slope_short_6_v"] ** 2
-    else:
-        feat["slope_short_6_v_sq"] = 0.0
-    # ret_8_v_sq: ret_8_vの2乗
-    if "ret_8_v" in feat:
-        feat["ret_8_v_sq"] = feat["ret_8_v"] ** 2
-    else:
-        feat["ret_8_v_sq"] = 0.0
-    # ret_12_v_sq: ret_12_vの2乗
-    if "ret_12_v" in feat:
-        feat["ret_12_v_sq"] = feat["ret_12_v"] ** 2
-    else:
-        feat["ret_12_v_sq"] = 0.0
-    # high_low_ratio_20: 直近20本のhigh/low比
+    # 高低比
     if i >= 19:
         high20 = float(df["high"].iloc[i-19:i+1].max())
         low20 = float(df["low"].iloc[i-19:i+1].min())
-        feat["high_low_ratio_20"] = high20 / max(low20, 1e-6)
+        feat["high_low_ratio_20"] = float(high20 / max(low20, 1e-6))
     else:
         feat["high_low_ratio_20"] = 0.0
-    # atr_change_10: ATRの10本変化量
-    atr_series = atr(df, 14).fillna(0.0)
+    # ATR変化
     if i >= 10:
-        feat["atr_change_10"] = atr_series.iloc[i] - atr_series.iloc[i-10]
+        feat["atr_change_10"] = float(a_now - float(atr_series.iloc[i-10]))
     else:
         feat["atr_change_10"] = 0.0
-    # --- 必須特徴量の追加（漏れ防止） ---
-    for k in ["z_close_20_sq", "slope_short_6_v_sq", "ret_8_v_sq", "ret_12_v_sq", "dir", "dist_to_level", "atr_slope_dir", "rsi_div_dir", "high_low_ratio_20", "atr_change_10"]:
-        if k not in feat:
-            feat[k] = 0.0
-    # rsi_div_dir
-    if "rsi_div_dir" not in feat:
-        feat["rsi_div_dir"] = 0.0
-    # high_low_ratio_20
-    if "high_low_ratio_20" not in feat:
-        feat["high_low_ratio_20"] = 0.0
-    # atr_change_10
-    if "atr_change_10" not in feat:
-        feat["atr_change_10"] = 0.0
-    feat = {}
-    # ...既存の特徴量生成処理...
-    # ここに基本特徴量の代入が続く
-    feat["dir"] = dir_sign
-    feat["dist_to_level"] = (float(df["close"].iloc[len(df)-1]) - level) * dir_sign
-    # ...（他の特徴量生成処理）...
+    # セッションのone-hot（学習時と同様の近似）
+    tokyo, london, ny = session_onehot_feat(ts)
+    feat["tokyo"] = float(tokyo)
+    feat["london"] = float(london)
+    feat["ny"] = float(ny)
 
-    # --- 不足特徴量の追加 ---
-    # z_close_20_sq: z_close_20の2乗
-    if "z_close_20" in feat:
-        feat["z_close_20_sq"] = feat["z_close_20"] ** 2
-    else:
-        feat["z_close_20_sq"] = 0.0
-
-    # slope_short_6_v_sq: slope_short_6_vの2乗
-    if "slope_short_6_v" in feat:
-        feat["slope_short_6_v_sq"] = feat["slope_short_6_v"] ** 2
-    else:
-        feat["slope_short_6_v_sq"] = 0.0
-
-    # ret_8_v_sq: ret_8_vの2乗
-    if "ret_8_v" in feat:
-        feat["ret_8_v_sq"] = feat["ret_8_v"] ** 2
-    else:
-        feat["ret_8_v_sq"] = 0.0
-
-    # ret_12_v_sq: ret_12_vの2乗
-    if "ret_12_v" in feat:
-        feat["ret_12_v_sq"] = feat["ret_12_v"] ** 2
-    else:
-        feat["ret_12_v_sq"] = 0.0
-
-    # high_low_ratio_20: 直近20本のhigh/low比
-    i = len(df)-1
-    if i >= 19:
-        high20 = float(df["high"].iloc[i-19:i+1].max())
-        low20 = float(df["low"].iloc[i-19:i+1].min())
-        feat["high_low_ratio_20"] = high20 / max(low20, 1e-6)
-    else:
-        feat["high_low_ratio_20"] = 0.0
-
-    # atr_change_10: ATRの10本変化量
-    atr_series = atr(df, 14).fillna(0.0)
-    if i >= 10:
-        feat["atr_change_10"] = atr_series.iloc[i] - atr_series.iloc[i-10]
-    else:
-        feat["atr_change_10"] = 0.0
-    features_list = [
-        "ret_1", "ret_4", "atr", "touch_density", "slope_long", "tokyo", "london", "ny", "ret_8", "ret_12",
-        "atr14_norm", "atr_ratio", "d_atr14", "range_pct", "body_ratio", "wick_up_ratio", "wick_dn_ratio", "slope_short_6",
-        "z_close_20", "sin_hour", "cos_hour", "touch_x_atr", "slope_long_x_ny", "ret_1_v", "ret_4_v", "ret_8_v", "ret_12_v",
-        "range_pct_v", "slope_short_6_v", "atr14_norm_v", "atr_ratio_56", "rv20", "reg_atr_low", "reg_atr_mid", "reg_atr_high",
-        "tokyo_x_range", "tokyo_x_touch", "london_x_range", "london_x_touch", "ny_x_range", "ny_x_touch", "touch_x_atr_v",
-        "touch_x_slope_v", "z_x_atr_v", "reg_low_x_z", "reg_low_x_slope_v", "reg_mid_x_z", "reg_mid_x_slope_v", "reg_high_x_z",
-        "reg_high_x_slope_v", "z_close_20_sq", "slope_short_6_v_sq", "ret_8_v_sq", "ret_12_v_sq", "dir", "dist_to_level",
-        "atr_slope_dir", "rsi_div_dir", "high_low_ratio_20", "atr_change_10"
-    ]
-    # 必要な特徴量のみ抽出し、0埋め（必ず60個のkeyを持つdictを返す）
-    filtered_feat = {k: feat.get(k, 0.0) for k in features_list}
-    debug_path = r"c:\Users\daiki\OneDrive\fx2\FX-Learning-Tools\filtered_feat_debug.txt"
-    try:
-        with open(debug_path, "a", encoding="utf-8") as dbg:
-            dbg.write(f"CALL make_features_for_level: df={df.shape}, ts={ts}, level={level}, dir_sign={dir_sign}\n")
-            dbg.write(f"features_list={features_list}\n")
-            dbg.write(f"filtered_feat keys={list(filtered_feat.keys())}, len={len(filtered_feat)}\n")
-    except Exception as e:
-        with open(debug_path, "a", encoding="utf-8") as dbg:
-            dbg.write(f"EXCEPTION in make_features_for_level: {e}\n")
-    # レベルに最も近いバーを探す
-    i = len(df)-1  # 直近バー
-    # カラム名を学習時と揃える
-    c  = float(df["close"].iloc[i])
-    h  = float(df["high"].iloc[i])
-    l  = float(df["low"].iloc[i])
-    # 方向性特徴量
-    feat = {}
-    feat["dir"] = dir_sign
-    feat["dist_to_level"] = (c - level) * dir_sign
-    feat["diff_level_close"] = (c - level) * dir_sign
-    feat["recent_high"] = float(df["high"].iloc[max(0, i-10):i+1].max()) * dir_sign
-    feat["recent_low"] = float(df["low"].iloc[max(0, i-10):i+1].min()) * dir_sign
-    feat["above_level"] = 1.0 if c > level else 0.0
-    feat["below_level"] = 1.0 if c < level else 0.0
-    a = atr(df, 14).fillna(0.0).iloc[i]
-    feat["atr_norm"] = a / max(1e-6, c)
-    feat["atr_slope_dir"] = (atr(df, 14).diff().fillna(0.0).iloc[i]) * dir_sign
-    # RSIダイバージェンス例（仮）
-    if "rsi" in df.columns:
-        feat["rsi_div_dir"] = (df["rsi"].diff().fillna(0.0).iloc[i]) * dir_sign
-    else:
-        feat["rsi_div_dir"] = 0.0
-    dist     = abs(c - level)
-    feat["near"] = 1.0 / (dist + 1e-6)
-    Ntouch=200
-    sub = df.iloc[max(0, i-Ntouch):i+1]
-    touches = int((((sub["Low"]<=level)&(sub["High"]>=level)) | (sub["Close"].sub(level).abs()<=touch_buffer)).sum()) if "Low" in df.columns else int((((sub["low"]<=level)&(sub["high"]>=level)) | (sub["close"].sub(level).abs()<=touch_buffer)).sum())
-    feat["touches"] = touches
-    sess_tokyo, sess_london, sess_ny = session_onehot_feat(ts)
-    feat["tokyo"] = sess_tokyo
-    feat["london"] = sess_london
-    feat["ny"] = sess_ny
-    # meta["features"]のみでフィルタ（余計なカラム除外）
+    # metaの features をロードして順序＆0埋めを保証
     import json
-    with open("models/break_meta.json", "r", encoding="utf-8") as f:
-        meta_json = json.load(f)
-        features_list = meta_json.get("features", list(feat.keys()))
-    # 必要な特徴量のみ抽出し、0埋め（必ず60個のkeyを持つdictを返す）
-    filtered_feat = {k: feat.get(k, 0.0) for k in features_list}
+    try:
+        with open("models/break_meta.json", "r", encoding="utf-8") as f:
+            meta_json = json.load(f)
+            features_list = list(meta_json.get("features", []))
+    except Exception:
+        # フォールバック: 既存キーのみ（最悪ケース）。ただし build側で列チェックが働く。
+        features_list = list(feat.keys())
+
+    # 予防: 数値化＆欠損0.0, 存在しないキーは0.0
+    filtered_feat = {}
+    for k in features_list:
+        v = feat.get(k, 0.0)
+        try:
+            v = float(v)
+        except Exception:
+            v = 0.0
+        if not np.isfinite(v):
+            v = 0.0
+        filtered_feat[k] = v
+
+    # timestamp は学習features外なので別添え（呼び出し側で列として追加するケースあり）
     filtered_feat["timestamp"] = ts
-    print(f"filtered_feat keys={list(filtered_feat.keys())}, len={len(filtered_feat)}")
     return filtered_feat
 
     # テスト用: make_features_for_levelの直接呼び出し
@@ -5297,12 +5163,18 @@ if show_break_prob:
                 ev_df[cols_show]
                     .style.format({
                         "level":"{:.3f}",
-                        "P_up":"{:.1%}","P_dn":"{:.1%}",
-                        "E_pips_up":"{:.2f}","E_pips_dn":"{:.2f}",
-                        "EV_up":"{:.2f}","EV_dn":"{:.2f}",
-                        "best_EV":"{:.2f}"
+                        "P_up":"{:.2%}","P_dn":"{:.2%}",  # 少数2桁まで表示して極小確率を見やすく
+                        "E_pips_up":"{:.3f}","E_pips_dn":"{:.3f}",  # EVの丸め誤差で0に見えるのを回避
+                        "EV_up":"{:.3f}","EV_dn":"{:.3f}",
+                        "best_EV":"{:.3f}"
                     })
             )
+            # 参考: 極小確率で 0.00% に見えている可能性の注記
+            try:
+                if not ev_df.empty and ((ev_df["P_up"] < 0.005) & (ev_df["P_dn"] < 0.005)).any():
+                    st.caption("注: P_up/P_dn が 0.5% 未満の場合、丸めで 0.00% に見えることがあります。上の表は桁数を増やして表示しています。")
+            except Exception:
+                pass
             if 'ev_meta' in locals():
                 status = 'cache hit' if ev_meta.get('cache_hit') else 'recompute'
                 if ev_meta.get('skipped'):

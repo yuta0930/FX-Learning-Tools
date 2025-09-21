@@ -4,14 +4,17 @@ Purpose:
     Quickly flag features that may inadvertently contain future information
     (look-ahead bias) by comparing predictive power of current vs. shifted versions.
 
-Method:
-    For each candidate feature column f:
-      - Compute AUC/AP of (f, y)
-      - Shift feature forward by 1 (f.shift(-1)) -> simulates leakage of one-step future
-      - Shift feature backward by 1 (f.shift(1))  -> past-only baseline
-      - Recompute metrics (drop NaNs after shifting)
-      - If AUC_future - AUC_current >= auc_delta_min AND AUC_future >= auc_future_min
-        (or similarly for AP), mark as suspicious
+        Method:
+        For each candidate feature column f:
+            - Compute AUC/AP of (f, y)  -> current
+            - Shift feature forward by 1 (f.shift(-1)) -> simulates leakage of one-step future ("future")
+            - Shift feature backward by 1 (f.shift(1))  -> aligns a potentially future-looking feature with y ("past")
+            - Recompute metrics (drop NaNs after shifting)
+            - Suspicious if EITHER:
+                    (A) future gain:   AUC_future - AUC_current >= auc_delta_min AND AUC_future >= auc_future_min
+                    (B) past gain:     AUC_past   - AUC_current >= auc_delta_min AND AUC_past   >= auc_future_min
+                (APでの条件でも可)。
+                特に f ≈ y(t+1) 型の未来リーケージは "past" シフトで y(t) と強く整合しやすいため (B) が有効。
 
 Returned DataFrame columns:
     feature, n_current, auc_current, ap_current,
@@ -142,10 +145,20 @@ def detect_temporal_leakage(
         auc_gain = auc_future - auc_curr if np.isfinite(auc_future) and np.isfinite(auc_curr) else np.nan
         ap_gain = ap_future - ap_curr if np.isfinite(ap_future) and np.isfinite(ap_curr) else np.nan
 
-        suspicious = (
+        # 追加: "past" シフトでの顕著な改善もリーケージ疑いとみなす
+        auc_past_gain = (auc_past - auc_curr) if np.isfinite(auc_past) and np.isfinite(auc_curr) else np.nan
+        ap_past_gain  = (ap_past  - ap_curr)  if np.isfinite(ap_past)  and np.isfinite(ap_curr)  else np.nan
+
+        suspicious_future = (
             (np.isfinite(auc_gain) and auc_gain >= auc_delta_min and (auc_future >= auc_future_min))
-            or (np.isfinite(ap_gain) and ap_gain >= ap_delta_min and (ap_future >= ap_future_min))
+            or (np.isfinite(ap_gain)  and ap_gain  >= ap_delta_min  and (ap_future  >= ap_future_min))
         )
+        suspicious_past = (
+            (np.isfinite(auc_past_gain) and auc_past_gain >= auc_delta_min and (auc_past >= auc_future_min))
+            or (np.isfinite(ap_past_gain)  and ap_past_gain  >= ap_delta_min  and (ap_past  >= ap_future_min))
+        )
+
+        suspicious = bool(suspicious_future or suspicious_past)
 
         out_rows.append({
             "feature": col,
