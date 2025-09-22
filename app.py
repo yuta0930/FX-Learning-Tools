@@ -225,82 +225,7 @@ with col2:
     except Exception:
         ev = float("nan")
     st.metric("EV per trade", f"{ev:.4f}" if ev == ev else "N/A")  # NaN対応
-with st.sidebar.expander("🛡 Risk Guard", expanded=False):
-    tg = st.session_state.get("trade_guard")
-    if tg is None:
-        st.write("(未初期化)")
-    else:
-        s = tg.state()
-        st.write(f"日次Trades: {s['day_trades']} (max {s['max_day_trades']})")
-        st.write(f"連敗: {s['consecutive_losses']} (limit {s['loss_cooldown_after']})")
-        st.write(f"Cooldown: {'ON' if s['in_cooldown'] else 'OFF'} / 残 {s['cooldown_remaining_min']}m")
-        if s.get('session_trades'):
-            st.write("Session trades:")
-            for k,v in s['session_trades'].items():
-                st.write(f"- {k}: {v} / {s['max_session_trades']}")
-        # 自動ATR計算（dfがあれば）
-        latest_atr_disp = "n/a"
-        _df_candidate = globals().get('df', None)
-        if _df_candidate is not None:
-            try:
-                import pandas as _pd
-                if isinstance(_df_candidate, _pd.DataFrame) and not _df_candidate.empty:
-                    atr_period = s.get('atr_period', 14)
-                    lat = compute_latest_atr(_df_candidate.tail(500), period=int(atr_period))
-                    if np.isfinite(lat):
-                        tg.record_atr(lat)
-                        latest_atr_disp = f"{lat:.5f}"
-            except Exception as e:
-                st.write(f"ATR計算失敗: {e}")
-        st.write(f"最新ATR(period={s.get('atr_period',14)}): {latest_atr_disp}")
-        col_w, col_l = st.columns(2)
-        with col_w:
-            if st.button("Win記録", key="rg_mark_win"):
-                tg.register_trade(result_pips=+1, ts=pd.Timestamp.utcnow(), session=None)
-        with col_l:
-            if st.button("Loss記録", key="rg_mark_loss"):
-                tg.register_trade(result_pips=-1, ts=pd.Timestamp.utcnow(), session=None)
-        s2 = tg.state()
-        st.caption(f"更新後: 日次 {s2['day_trades']} / 連敗 {s2['consecutive_losses']}")
-        # 詳細スナップショット（入れ子のエクスパンダは禁止のためコンテナで表示）
-        with st.container():
-            st.caption("詳細スナップショット")
-            try:
-                if hasattr(tg, 'snapshot') and callable(getattr(tg, 'snapshot')):
-                    snap = tg.snapshot()
-                else:
-                    snap = tg.state()
-                st.json(snap)
-            except Exception as e:
-                st.write(f"snapshot/state の取得に失敗: {e}")
-            cols = st.columns(2)
-            with cols[0]:
-                if st.button("日次カウンタをリセット", key="rg_reset_day"):
-                    try:
-                        if hasattr(tg, 'reset_day') and callable(getattr(tg, 'reset_day')):
-                            tg.reset_day()
-                        else:
-                            # 後方互換: 利用可能ならカウンタを0へ
-                            st.warning("reset_day 未対応のため簡易リセットは省略しました。")
-                        st.toast("日次カウンタをリセットしました", icon="♻️")
-                    except Exception as e:
-                        st.error(f"日次リセット失敗: {e}")
-            with cols[1]:
-                if st.button("スナップショット再取得", key="rg_resnap"):
-                    try:
-                        _ = tg.snapshot() if hasattr(tg, 'snapshot') and callable(getattr(tg, 'snapshot')) else tg.state()
-                        st.toast("スナップショット更新", icon="🔄")
-                    except Exception as e:
-                        st.error(f"再取得失敗: {e}")
-
-# --- ニュースキャッシュ メタ ---
-with st.sidebar.expander("📰 ニュースキャッシュ", expanded=False):
-    ns = st.session_state.get('news_stats', {'hits':0,'miss':0,'size':0})
-    st.write(f"LRUサイズ: {ns.get('size',0)}  /  Hit: {ns.get('hits',0)}  Miss: {ns.get('miss',0)}")
-    if st.button("キャッシュをクリア", key="clear_news_cache"):
-        st.session_state.pop('news_win_cache', None)
-        st.session_state['news_stats'] = {'hits':0,'miss':0,'size':0}
-        st.toast("ニュースキャッシュをクリアしました", icon="🧹")
+## （移設）Risk Guard と ニュースキャッシュはドリフト監視の直後に表示
 # --- セッション別カバレッジ確認用（UI/検証タブ等で利用） ---
 # pred_dfに[session, signal]列がある前提
 # 例: cov_by_sess = pred_df.groupby("session")["signal"].mean()
@@ -1346,6 +1271,7 @@ def normalize_ohlcv(df: pd.DataFrame, symbol: str | None) -> pd.DataFrame:
 
 # ---------------- サイドバー ----------------
 st.sidebar.title("設定")
+st.sidebar.header("1) データ取得・基本設定")
 symbol = st.sidebar.text_input("ティッカー（USDJPY）", value="JPY=X", help="yfinanceでUSDJPYは 'JPY=X'")
 period_raw = st.sidebar.selectbox("取得期間", ["7d","14d","30d","60d","90d","180d","1y"], index=2)
 interval = st.sidebar.selectbox("足種", ["5m","15m","30m","60m","1d"], index=1)
@@ -1373,13 +1299,7 @@ params = DecisionParams(
 )
 
 
-# --- OANDA API設定 ---
-st.sidebar.markdown("---")
-with st.sidebar.expander("OANDA API設定", expanded=False):
-    oanda_token = st.text_input("OANDA APIトークン", type="password", help="OANDAのAPIトークンを入力")
-    oanda_account = st.text_input("OANDAアカウント番号", help="OANDAのアカウント番号を入力")
-    oanda_env = st.selectbox("OANDA環境", ["practice", "live"], index=0, help="practice=デモ, live=本番")
-
+# （整理）ここでのOANDA設定エリアは重複のため削除し、サイドバー終盤の発注設定と統合しました
 st.sidebar.markdown("---")
 st.sidebar.subheader("取引コスト設定（pips）")
 fee_commission = st.sidebar.number_input("手数料（往復）", min_value=0.0, max_value=5.0, value=0.00, step=0.01)
@@ -1400,6 +1320,52 @@ except Exception:
         html(f"""<script>setTimeout(function(){{window.location.reload();}}, {int(refresh_secs*1000)});</script>""", height=0)
 
 st.sidebar.markdown("---")
+# 表示密度（チャートx軸の詰め表示）
+compact_weekend = st.sidebar.checkbox(
+    "金曜-月曜を詰めて表示（等間隔）",
+    value=False,
+    help="x軸をカテゴリ扱いにして、週末などの時間ギャップを完全に詰めて表示します（バー間隔は常に等間隔）。"
+)
+# --- 🕒 現在時刻（JST, 秒付き） ---
+with st.sidebar.expander("🕒 現在時刻 (JST)", expanded=True):
+    try:
+        from streamlit.components.v1 import html as _html
+        _html(
+            """
+            <div id="jst-clock" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 20px; color: #e0f2f1; padding: 4px 0;">
+                --:--:--
+            </div>
+            <script>
+            (function(){
+                function updateClock(){
+                    try{
+                        const now = new Date();
+                        const opts = {
+                            timeZone: 'Asia/Tokyo',
+                            year: 'numeric', month: '2-digit', day: '2-digit',
+                            hour: '2-digit', minute: '2-digit', second: '2-digit',
+                            hour12: false
+                        };
+                        const f = new Intl.DateTimeFormat('ja-JP', opts);
+                        const parts = f.formatToParts(now).reduce((a,p)=>{a[p.type]=p.value; return a;}, {});
+                        const txt = `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} JST`;
+                        const el = document.getElementById('jst-clock');
+                        if(el) el.textContent = txt;
+                    }catch(e){ /* noop */ }
+                }
+                updateClock();
+                setInterval(updateClock, 250);
+            })();
+            </script>
+            """,
+            height=48,
+        )
+    except Exception:
+        # フォールバック: Python側での一回表示（自動更新はページの自動更新設定に依存）
+        now = pd.Timestamp.now(tz=JST)
+        st.code(now.strftime("%Y-%m-%d %H:%M:%S %Z"), language=None)
+st.sidebar.markdown("---")
+st.sidebar.header("2) シグナル条件・ニュース抑制")
 st.sidebar.subheader("シグナル条件")
 signal_mode = st.sidebar.selectbox(
     "種別を選択",
@@ -1408,6 +1374,40 @@ signal_mode = st.sidebar.selectbox(
 )
 retest_wait_k_base = st.sidebar.slider("リテスト待機本数K", 3, 30, 10)
 st.sidebar.caption("ブレイク後、K本以内にライン/バンドへ戻ったかで『リテストあり/なし』を判定（指数0〜1も算出）")
+
+# ---------- ニュース・指標フィルタ & 赤影（上へ移動） ----------
+st.sidebar.markdown("---")
+with st.sidebar.expander("ニュース・指標フィルタ / 赤影", expanded=True):
+    news_file = st.file_uploader("ニュースCSVをアップロード（任意）", type=["csv"])
+    st.caption("受理列: time/timestamp/datetime または date+time、importance[, title]（JST推奨）")
+
+    # フィルタ方式
+    news_filter_mode = st.radio(
+        "フィルタ方式",
+        ["一律±分", "重要度別（赤影と同じ）"],
+        index=1, horizontal=True
+    )
+    news_win = st.slider("一律±分（上を選んだときのみ使用）", 0, 120, 30)
+    news_imp_min = st.slider("重要度しきい値 (>=)", 1, 5, 3)
+
+    # 重要度→±分マッピング（赤影/重要度別フィルタで使用）
+    st.caption("重要度別ウィンドウ（左右±分）")
+    map_5 = st.number_input("★5 → ±分", value=90, step=5)
+    map_4 = st.number_input("★4 → ±分", value=30, step=5)
+    map_3 = st.number_input("★3 → ±分", value=20, step=5)
+    map_2 = st.number_input("★2 → ±分", value=0, step=5)
+    map_1 = st.number_input("★1 → ±分", value=0, step=5)
+    use_news_shade = st.checkbox("チャートに赤影を重ねて表示", value=True)
+
+    # ハード/ソフト抑制
+    apply_news_filter = st.checkbox("ハード抑制（窓内のシグナル無効化）", value=True)
+    use_soft_suppress = st.checkbox("ソフト抑制（窓内だけ判定を厳しめに）", value=True)
+    soft_break_add = st.number_input("ソフト: ブレイクバッファ 追加", value=0.02, step=0.01, format="%.2f")
+    soft_K_add = st.slider("ソフト: K 追加", 0, 10, 4)
+    st.markdown("— 自動強化（重要イベントプリセット）—")
+    auto_harden = st.checkbox("★4以上の直近イベントで自動ハード化", value=True)
+    auto_harden_min_before = st.number_input("ハード化: 直前最低分", value=30, step=5)
+    auto_harden_min_after = st.number_input("ハード化: 直後最低分", value=60, step=5)
 
 with st.sidebar.expander("Adaptive θ", expanded=False):
     st.session_state.setdefault('theta_base', 0.60)
@@ -1460,6 +1460,7 @@ with st.sidebar.expander("Adaptive θ プリセット", expanded=False):
             _apply_preset("Aggressive")
 
 # --- ドリフト監視（ヒステリシス＋自動ガード/θブースト）---
+st.sidebar.header("3) モデル監視・安全装置")
 with st.sidebar.expander("📉 データドリフト監視", expanded=False):
     st.session_state.setdefault('drift_meta', {})
     # しきい値と作用
@@ -1566,7 +1567,86 @@ with st.sidebar.expander("📉 データドリフト監視", expanded=False):
             if st.button("Aggressive", key="drift_preset_aggr"):
                 _apply_drift_preset("Aggressive")
 
+# --- Risk Guard（移設：ここに配置）---
+with st.sidebar.expander("🛡 Risk Guard", expanded=False):
+    tg = st.session_state.get("trade_guard")
+    if tg is None:
+        st.write("(未初期化)")
+    else:
+        s = tg.state()
+        st.write(f"日次Trades: {s['day_trades']} (max {s['max_day_trades']})")
+        st.write(f"連敗: {s['consecutive_losses']} (limit {s['loss_cooldown_after']})")
+        st.write(f"Cooldown: {'ON' if s['in_cooldown'] else 'OFF'} / 残 {s['cooldown_remaining_min']}m")
+        if s.get('session_trades'):
+            st.write("Session trades:")
+            for k,v in s['session_trades'].items():
+                st.write(f"- {k}: {v} / {s['max_session_trades']}")
+        # 自動ATR計算（dfがあれば）
+        latest_atr_disp = "n/a"
+        _df_candidate = globals().get('df', None)
+        if _df_candidate is not None:
+            try:
+                import pandas as _pd
+                if isinstance(_df_candidate, _pd.DataFrame) and not _df_candidate.empty:
+                    atr_period = s.get('atr_period', 14)
+                    lat = compute_latest_atr(_df_candidate.tail(500), period=int(atr_period))
+                    if np.isfinite(lat):
+                        tg.record_atr(lat)
+                        latest_atr_disp = f"{lat:.5f}"
+            except Exception as e:
+                st.write(f"ATR計算失敗: {e}")
+        st.write(f"最新ATR(period={s.get('atr_period',14)}): {latest_atr_disp}")
+        col_w, col_l = st.columns(2)
+        with col_w:
+            if st.button("Win記録", key="rg_mark_win"):
+                tg.register_trade(result_pips=+1, ts=pd.Timestamp.utcnow(), session=None)
+        with col_l:
+            if st.button("Loss記録", key="rg_mark_loss"):
+                tg.register_trade(result_pips=-1, ts=pd.Timestamp.utcnow(), session=None)
+        s2 = tg.state()
+        st.caption(f"更新後: 日次 {s2['day_trades']} / 連敗 {s2['consecutive_losses']}")
+        # 詳細スナップショット（入れ子のエクスパンダは禁止のためコンテナで表示）
+        with st.container():
+            st.caption("詳細スナップショット")
+            try:
+                if hasattr(tg, 'snapshot') and callable(getattr(tg, 'snapshot')):
+                    snap = tg.snapshot()
+                else:
+                    snap = tg.state()
+                st.json(snap)
+            except Exception as e:
+                st.write(f"snapshot/state の取得に失敗: {e}")
+            cols = st.columns(2)
+            with cols[0]:
+                if st.button("日次カウンタをリセット", key="rg_reset_day"):
+                    try:
+                        if hasattr(tg, 'reset_day') and callable(getattr(tg, 'reset_day')):
+                            tg.reset_day()
+                        else:
+                            # 後方互換: 利用可能ならカウンタを0へ
+                            st.warning("reset_day 未対応のため簡易リセットは省略しました。")
+                        st.toast("日次カウンタをリセットしました", icon="♻️")
+                    except Exception as e:
+                        st.error(f"日次リセット失敗: {e}")
+            with cols[1]:
+                if st.button("スナップショット再取得", key="rg_resnap"):
+                    try:
+                        _ = tg.snapshot() if hasattr(tg, 'snapshot') and callable(getattr(tg, 'snapshot')) else tg.state()
+                        st.toast("スナップショット更新", icon="🔄")
+                    except Exception as e:
+                        st.error(f"再取得失敗: {e}")
+
+# --- ニュースキャッシュ メタ（移設：ここに配置） ---
+with st.sidebar.expander("📰 ニュースキャッシュ", expanded=False):
+    ns = st.session_state.get('news_stats', {'hits':0,'miss':0,'size':0})
+    st.write(f"LRUサイズ: {ns.get('size',0)}  /  Hit: {ns.get('hits',0)}  Miss: {ns.get('miss',0)}")
+    if st.button("キャッシュをクリア", key="clear_news_cache"):
+        st.session_state.pop('news_win_cache', None)
+        st.session_state['news_stats'] = {'hits':0,'miss':0,'size':0}
+        st.toast("ニュースキャッシュをクリアしました", icon="🧹")
+
 # --- 直近1–2日 簡易バックテスト（AP/Brier/ECE） ---
+st.sidebar.header("4) クイック評価・チューニング")
 with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
     st.caption("モデル確率と価格ラベルから直近の指標をざっくり確認（未来情報リークなしの特徴量で推論）")
     look_days = st.radio("評価期間", [1, 2], index=0, horizontal=True, key="quick_eval_days")
@@ -1990,6 +2070,7 @@ with st.sidebar.expander("🧪 グリッド評価（Apply Best）", expanded=Fal
             st.error(f"グリッド評価でエラー: {e}")
 
 st.sidebar.markdown("---")
+st.sidebar.header("5) ライン・チャネル検出")
 st.sidebar.subheader("極値検出（スイング）")
 look = st.sidebar.slider("左右の窓幅", 3, 15, 5)
 
@@ -2018,42 +2099,11 @@ w_sum = max(1e-9, w_touch + w_recent + w_session + w_vol)
 w_touch, w_recent, w_session, w_vol = [w/w_sum for w in (w_touch, w_recent, w_session, w_vol)]
 
 
-# ---------- ニュース・指標フィルタ & 赤影 ----------
-st.sidebar.markdown("---")
-with st.sidebar.expander("ニュース・指標フィルタ / 赤影", expanded=False):
-    news_file = st.file_uploader("ニュースCSVをアップロード（任意）", type=["csv"])
-    st.caption("受理列: time/timestamp/datetime または date+time、importance[, title]（JST推奨）")
-
-    # フィルタ方式
-    news_filter_mode = st.radio(
-        "フィルタ方式",
-        ["一律±分", "重要度別（赤影と同じ）"],
-        index=1, horizontal=True
-    )
-    news_win = st.slider("一律±分（上を選んだときのみ使用）", 0, 120, 30)
-    news_imp_min = st.slider("重要度しきい値 (>=)", 1, 5, 3)
-
-    # 重要度→±分マッピング（赤影/重要度別フィルタで使用）
-    st.caption("重要度別ウィンドウ（左右±分）")
-    map_5 = st.number_input("★5 → ±分", value=90, step=5)
-    map_4 = st.number_input("★4 → ±分", value=30, step=5)
-    map_3 = st.number_input("★3 → ±分", value=20, step=5)
-    map_2 = st.number_input("★2 → ±分", value=0, step=5)
-    map_1 = st.number_input("★1 → ±分", value=0, step=5)
-    use_news_shade = st.checkbox("チャートに赤影を重ねて表示", value=True)
-
-    # ハード/ソフト抑制
-    apply_news_filter = st.checkbox("ハード抑制（窓内のシグナル無効化）", value=True)
-    use_soft_suppress = st.checkbox("ソフト抑制（窓内だけ判定を厳しめに）", value=True)
-    soft_break_add = st.number_input("ソフト: ブレイクバッファ 追加", value=0.02, step=0.01, format="%.2f")
-    soft_K_add = st.slider("ソフト: K 追加", 0, 10, 4)
-    st.markdown("— 自動強化（重要イベントプリセット）—")
-    auto_harden = st.checkbox("★4以上の直近イベントで自動ハード化", value=True)
-    auto_harden_min_before = st.number_input("ハード化: 直前最低分", value=30, step=5)
-    auto_harden_min_after = st.number_input("ハード化: 直後最低分", value=60, step=5)
+# （下部の重複ニュース設定ブロックは上へ集約済み）
 
 # ---------------- バックテスト ----------------
 st.sidebar.markdown("---")
+st.sidebar.header("6) バックテスト・確率・EV")
 st.sidebar.subheader("バックテスト")
 fwd_n = st.sidebar.slider("ブレイク後 N 本（損益判定）", 5, 120, 20)
 spread_pips = st.sidebar.number_input("想定スプレッド（pips）", value=0.5, step=0.1)
@@ -2074,6 +2124,7 @@ ev_level_min_samples = st.sidebar.slider("レベル別の最低サンプル数",
 
 # ---------- 手動再学習ボタン ----------
 st.sidebar.markdown("---")
+st.sidebar.header("7) 再学習・モデル運用")
 st.sidebar.subheader("モデルの手動再学習")
 proj_dir = str(pathlib.Path(__file__).resolve().parent)
 train_script = "ai_train_break.py"
@@ -3947,6 +3998,7 @@ def make_features_for_level(df, ts, level, dir_sign, touch_buffer, trend_look=15
         make_features_for_level(df, ts, level, dir_sign, touch_buffer)
 
 # ====================== チャート描画 ======================
+# （表示オプションは上部へ移動済み）
 fig = go.Figure()
 fig.add_trace(go.Candlestick(
     x=df.index,
@@ -4382,7 +4434,42 @@ if enable_ghost:
 fig.update_layout(template="plotly_dark", paper_bgcolor=COLOR_BG, plot_bgcolor=COLOR_BG,
                   title=f"{symbol} {interval} - Auto Lines (Dark)", xaxis_rangeslider_visible=False,
                   font=dict(color=COLOR_TEXT, size=12))
-fig.update_xaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID)
+if compact_weekend:
+    # 等間隔（カテゴリ）表示: 週末などの時間ギャップを完全に詰める
+    fig.update_xaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID,
+                     type="category")
+    # カテゴリ軸は位置が0..N-1の数値に見えることがあるため、見やすい日付ラベルを付ける
+    try:
+        n = len(df)
+        if n > 0:
+            step = max(1, int(np.ceil(n / 6))) if 'np' in globals() else max(1, (n + 5) // 6)
+            tickvals = list(range(0, n, step))
+            ticktext = [pd.Timestamp(df.index[i]).strftime('%m/%d %H:%M') for i in tickvals]
+            fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext)
+    except Exception:
+        pass
+else:
+    # 時間軸を維持しつつ、土曜は6時以降と日曜をスキップ（JST基準）
+    rb = None
+    try:
+        idx = df.index if isinstance(df.index, pd.DatetimeIndex) else None
+        if idx is not None and len(idx) > 0:
+            # すでにJSTに変換済み（normalize_ohlcvでJST化）。念のためtz-naiveはJSTローカライズしない。
+            dow = idx.dayofweek  # 月=0 ... 日=6
+            hrs = idx.hour
+            mask_skip = ((dow == 5) & (hrs >= 6)) | (dow == 6)  # 土(5)の6時以降 + 日(6) 全て
+            to_skip = idx[mask_skip]
+            if len(to_skip) > 0:
+                rb = [dict(values=list(to_skip))]
+    except Exception:
+        rb = None
+
+    if rb is None:
+        # フォールバック: 従来の週末スキップ
+        rb = [dict(bounds=["sat", "mon"])]
+
+    fig.update_xaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID,
+                     rangebreaks=rb)
 fig.update_yaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID)
 
 # ★ ここでズーム保持を追加
