@@ -356,7 +356,9 @@ def prepare_df_feats_for_inference(raw_df: pd.DataFrame) -> pd.DataFrame:
     raw_df = raw_df.copy()
     raw_df["timestamp"] = pd.to_datetime(raw_df["timestamp"])
     raw_df = raw_df.sort_values("timestamp").reset_index(drop=True)
-    assert raw_df["timestamp"].is_monotonic_increasing
+    if not raw_df["timestamp"].is_monotonic_increasing:
+        st.error("入力データのtimestampが単調増加ではありません。データを確認してください。")
+        raise ValueError("timestamp not monotonic increasing")
 
     # 1) 基本特徴
     base_feats = build_features(raw_df)
@@ -714,14 +716,13 @@ def _get_news_windows_until_cached(t_end: pd.Timestamp, imp_threshold: int) -> p
     stats['miss'] += 1
     stats['size'] = len(cache)
     return dfw
-    return dfw
 
 def _is_suppressed_at(ts: pd.Timestamp, win_df: pd.DataFrame, news_win_minutes: int,
                       imp_min: int, mode_label: str) -> bool:
     """
     フィルタ方式に応じて抑制判定（すべて過去限定）
     """
-    if news_filter_mode == "重要度別（赤影と同じ）":
+    if mode_label == "重要度別（赤影と同じ）":
         if win_df is None or win_df.empty:
             return False
         return is_suppressed(ts, win_df)
@@ -891,6 +892,77 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import time
+import threading
+# ---- 構造化ログ（最小実装）----
+def log_event(event: str, **kwargs):
+    rec = {'ts': str(pd.Timestamp.utcnow()), 'event': event}
+    rec.update(kwargs)
+    st.session_state.setdefault('event_log', []).append(rec)
+    # メモリ肥大化防止: 直近5000件に制限
+    if len(st.session_state['event_log']) > 5000:
+        st.session_state['event_log'] = st.session_state['event_log'][-5000:]
+    # 永続化: 日次CSVに追記（ベストエフォート、失敗してもUI継続）
+    try:
+        base_dir = pathlib.Path(__file__).resolve().parent / 'logs'
+        base_dir.mkdir(parents=True, exist_ok=True)
+        day = pd.Timestamp.utcnow().strftime('%Y%m%d')
+        path = base_dir / f'events_{day}.csv'
+        # 既存列を優先しつつ、未知キーも保存するため列順を安定化
+        keys_order = ["ts","event","corr","source","symbol","interval","period","latency_ms","error"]
+        cols = list(dict.fromkeys([*keys_order, *rec.keys()]))
+        import csv
+        is_new = not path.exists()
+        # 単純なスレッド排他（Streamlitは通常単プロセス運用）
+        lock = st.session_state.setdefault('_log_csv_lock', None)
+        if lock is None:
+            import threading
+            lock = threading.Lock()
+            st.session_state['_log_csv_lock'] = lock
+        with lock:
+            with path.open('a', newline='', encoding='utf-8') as f:
+                w = csv.DictWriter(f, fieldnames=cols)
+                if is_new:
+                    w.writeheader()
+                w.writerow({k: rec.get(k, "") for k in cols})
+        # ローテーション（保持日数: 14日）
+        last_prune = st.session_state.get('_log_csv_last_prune')
+        now = pd.Timestamp.utcnow()
+        if not isinstance(last_prune, pd.Timestamp) or (now - last_prune).total_seconds() > 3600:
+            keep_days = int(os.getenv('LOG_RETENTION_DAYS', '14'))
+            cutoff = now.normalize() - pd.Timedelta(days=keep_days)
+            for p in base_dir.glob('events_*.csv'):
+                try:
+                    d = pd.to_datetime(p.stem.split('_')[1], format='%Y%m%d', utc=True)
+                    if d < cutoff.tz_localize('UTC'):
+                        p.unlink(missing_ok=True)
+                except Exception:
+                    continue
+            st.session_state['_log_csv_last_prune'] = now
+    except Exception:
+        pass
+
+# ---- ウォッチドッグ実行（スレッド）----
+def _run_with_timeout(fn, timeout_sec: float, *args, **kwargs):
+    """fn(*args, **kwargs) を別スレッドで実行し、timeoutを超えたら TimeoutError。
+    注意: Pythonスレッドはkillできないため、タイムアウト後も裏で実行が残る可能性がある。
+    ここでは安全側に即時リターンすることを優先する。
+    """
+    result = {'value': None, 'exc': None}
+    def _target():
+        try:
+            result['value'] = fn(*args, **kwargs)
+        except Exception as e:
+            result['exc'] = e
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout=timeout_sec)
+    if t.is_alive():
+        raise TimeoutError(f"operation timed out after {timeout_sec}s")
+    if result['exc'] is not None:
+        raise result['exc']
+    return result['value']
+
 
 def load_yf(symbol="JPY=X", period="60d", interval="15m"):
     df = yf.download(symbol, period=period, interval=interval, auto_adjust=False, progress=False)
@@ -898,9 +970,9 @@ def load_yf(symbol="JPY=X", period="60d", interval="15m"):
     df = df.reset_index().rename(columns={"Datetime":"timestamp"})  # ダウンロード結果のindex→列へ
     return df
 
-raw_df = load_yf("JPY=X", "60d", "15m")
+# 起動時の不要な外部取得は避ける（パフォーマンス/信頼性）
+# raw_df の即時ダウンロードは削除（ユーザー設定に基づく取得へ一元化）
 import plotly.graph_objects as go
-from sklearn.cluster import DBSCAN
 from dataclasses import dataclass
 import pytz, joblib
 from dotenv import load_dotenv
@@ -963,6 +1035,7 @@ COLOR_RECTANGLE = "#43a047"         # レクタングル（緑）
 COLOR_DOUBLE_TOP = "#d81b60"        # ダブルトップ（ピンク）
 COLOR_DOUBLE_BOTTOM = "#1976d2"     # ダブルボトム（青）
 COLOR_FLAG = "#fbc02d"              # フラッグ/ペナント（黄）
+COLOR_ASIA = "#8e24aa"             # アジア箱（紫）
 COLOR_HS = "#6d4c41"                # ヘッド＆ショルダーズ（茶）
 COLOR_CANDLE_UP_BODY = "#26a69a"
 COLOR_CANDLE_UP_EDGE = "#66fff9"
@@ -1003,7 +1076,9 @@ def _load_openai_client():
     client = OpenAI(api_key=api_key)
     return client, model
 
-client, DEFAULT_OAI_MODEL = _load_openai_client()
+# 遅延初期化：グローバルでは生成せず、利用時に取得
+client = None
+DEFAULT_OAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
 
 # ======== 状態収集（あなたの既存変数名に合わせて適宜修正）========
 def collect_state_for_ai():
@@ -1098,6 +1173,9 @@ def _fallback_answer(user_q: str) -> str:
 
 # ======== コパイロット呼び出し（例外をUIに出す）========
 def ask_copilot(app_state: dict, user_question: str) -> str:
+    global client, DEFAULT_OAI_MODEL
+    if client is None:
+        client, DEFAULT_OAI_MODEL = _load_openai_client()
     system = (
         "You are an FX breakout trading copilot specialized in USDJPY 15m.\n"
         "Use the JSON app state to give short, practical guidance.\n"
@@ -1126,12 +1204,17 @@ def ask_copilot(app_state: dict, user_question: str) -> str:
             max_output_tokens=2000,
         )
         ans = _extract_text_from_responses(raw).strip()
-        # デバッグ用: レスポンス内容を表示（expanderのネスト回避）
-        st.markdown("### APIレスポンス詳細")
-        st.write(raw)
+        # デバッグ出力はフラグで制御（本番は非表示）
+        if os.getenv("DEBUG_AI_RESPONSES", "0") in ("1", "true", "True"):
+            st.markdown("### APIレスポンス詳細")
+            st.write(raw)
         if not ans:
             st.error("AI応答が空でした。APIレスポンス内容を確認してください。")
-            st.write("APIレスポンス:", raw)
+            # 本番では生レスポンスを表示しない（漏洩防止）
+            if os.getenv("DEBUG_AI_RESPONSES", "0") in ("1", "true", "True"):
+                st.write("APIレスポンス:", raw)
+            else:
+                log_event('ai_resp_empty')
             raise RuntimeError("AI応答が空でした（output_text / output / choices からテキスト取得不可）。")
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
@@ -1184,11 +1267,7 @@ def ensure_jst_index(df: pd.DataFrame) -> pd.DataFrame:
         idx = idx.tz_localize("UTC")
     return df.copy().set_index(idx.tz_convert(JST))
 
-def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    high, low, close = df["high"], df["low"], df["close"]
-    prev_close = close.shift(1)
-    tr = pd.concat([(high-low), (high-prev_close).abs(), (low-prev_close).abs()], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+from utils.ta import atr
 
 def in_sessions(ts: pd.Timestamp) -> str:
     h = ts.hour
@@ -1272,9 +1351,12 @@ def normalize_ohlcv(df: pd.DataFrame, symbol: str | None) -> pd.DataFrame:
 # ---------------- サイドバー ----------------
 st.sidebar.title("設定")
 st.sidebar.header("1) データ取得・基本設定")
-symbol = st.sidebar.text_input("ティッカー（USDJPY）", value="JPY=X", help="yfinanceでUSDJPYは 'JPY=X'")
-period_raw = st.sidebar.selectbox("取得期間", ["7d","14d","30d","60d","90d","180d","1y"], index=2)
-interval = st.sidebar.selectbox("足種", ["5m","15m","30m","60m","1d"], index=1)
+symbol = st.sidebar.text_input("ティッカー（USDJPY）", value=st.session_state.get("symbol", "JPY=X"), help="yfinanceでUSDJPYは 'JPY=X'")
+period_raw = st.sidebar.selectbox("取得期間", ["7d","14d","30d","60d","90d","180d","1y"], index=["7d","14d","30d","60d","90d","180d","1y"].index(st.session_state.get("period_raw", "60d")))
+interval = st.sidebar.selectbox("足種", ["5m","15m","30m","60m","1d"], index=["5m","15m","30m","60m","1d"].index(st.session_state.get("interval", "15m")))
+st.session_state["symbol"] = symbol
+st.session_state["period_raw"] = period_raw
+st.session_state["interval"] = interval
 
 # === 推奨行動（意思決定ポリシー）サイドバー ===
 with st.sidebar.expander("🧭 推奨行動（意思決定ポリシー）", expanded=False):
@@ -1644,6 +1726,191 @@ with st.sidebar.expander("📰 ニュースキャッシュ", expanded=False):
         st.session_state.pop('news_win_cache', None)
         st.session_state['news_stats'] = {'hits':0,'miss':0,'size':0}
         st.toast("ニュースキャッシュをクリアしました", icon="🧹")
+
+# --- イベントログ（最新） ---
+with st.sidebar.expander("🧾 イベントログ (最新50)", expanded=False):
+    logs = st.session_state.get('event_log', [])
+    if logs:
+        df_logs = pd.DataFrame(logs[-50:])
+        st.dataframe(df_logs, use_container_width=True)
+        # CSVエクスポート
+        try:
+            csv = df_logs.to_csv(index=False).encode('utf-8')
+            st.download_button("CSVをダウンロード", csv, file_name="event_log_latest50.csv", mime="text/csv")
+        except Exception:
+            pass
+    else:
+        st.write("(ログなし)")
+
+# --- イベントログ（検索と全量DL） ---
+with st.sidebar.expander("🧾 イベントログ（検索と全量DL）", expanded=False):
+    logs = st.session_state.get('event_log', []) or []
+    if not logs:
+        st.write("(ログなし)")
+    else:
+        try:
+            df_all = pd.DataFrame(logs)
+            # 型整形
+            if 'ts' in df_all.columns:
+                try:
+                    df_all['ts'] = pd.to_datetime(df_all['ts'], utc=True, errors='coerce')
+                except Exception:
+                    pass
+            # フィルタUI
+            uniq_events = sorted([e for e in df_all.get('event', []).unique() if isinstance(e, str)]) if 'event' in df_all.columns else []
+            uniq_sources = sorted([e for e in df_all.get('source', []).dropna().unique() if isinstance(e, str)]) if 'source' in df_all.columns else []
+            c1, c2 = st.columns(2)
+            with c1:
+                events_sel = st.multiselect("イベント", options=uniq_events, default=[])
+                corr_q = st.text_input("corr 部分一致", value="")
+            with c2:
+                sources_sel = st.multiselect("source", options=uniq_sources, default=[])
+                kws = st.text_input("キーワード検索(JSON含む)", value="")
+            date_col1, date_col2 = st.columns(2)
+            with date_col1:
+                date_from = st.date_input("開始日(UTC)", value=None)
+            with date_col2:
+                date_to = st.date_input("終了日(UTC)", value=None)
+
+            df_f = df_all.copy()
+            # 期間フィルタ
+            if 'ts' in df_f.columns and (date_from or date_to):
+                try:
+                    if date_from:
+                        df_f = df_f[df_f['ts'] >= pd.Timestamp(date_from, tz='UTC')]
+                    if date_to:
+                        # 終日の終わりまで含める
+                        df_f = df_f[df_f['ts'] <= pd.Timestamp(date_to, tz='UTC') + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)]
+                except Exception:
+                    pass
+            # イベント/ソースフィルタ
+            if events_sel and 'event' in df_f.columns:
+                df_f = df_f[df_f['event'].isin(events_sel)]
+            if sources_sel and 'source' in df_f.columns:
+                df_f = df_f[df_f['source'].isin(sources_sel)]
+            # corr 部分一致
+            if corr_q:
+                df_f = df_f[df_f.astype(str).apply(lambda r: corr_q in r.get('corr', ''), axis=1)] if 'corr' in df_f.columns else df_f
+            # キーワード（全列をJSON文字列化し部分一致）
+            if kws:
+                def _row_contains(row):
+                    try:
+                        import json as _json
+                        s = _json.dumps({k: (str(v) if not isinstance(v, (int,float)) else v) for k,v in row.items()}, ensure_ascii=False)
+                        return kws in s
+                    except Exception:
+                        return False
+                df_f = df_f[df_f.apply(_row_contains, axis=1)]
+
+            # 並び替え: ts desc -> 先頭200件をプレビュー
+            if 'ts' in df_f.columns:
+                try:
+                    df_f = df_f.sort_values('ts', ascending=False)
+                except Exception:
+                    pass
+            total = len(df_f)
+            st.caption(f"該当 {total} 件（プレビュー最大200件）")
+            st.dataframe(df_f.head(200), use_container_width=True)
+            # ダウンロード
+            try:
+                csv_all = df_f.to_csv(index=False).encode('utf-8')
+                st.download_button("フィルタ結果をCSVダウンロード", csv_all, file_name="event_log_filtered.csv", mime="text/csv")
+            except Exception:
+                pass
+        except Exception as e:
+            st.write(f"フィルタの準備に失敗: {e}")
+
+# --- 価格取得レイテンシ（簡易統計） ---
+with st.sidebar.expander("⏱ 価格取得レイテンシ", expanded=False):
+    logs = st.session_state.get('event_log', []) or []
+    succ = [e for e in logs if isinstance(e, dict) and e.get('event') == 'price_fetch_success' and isinstance(e.get('latency_ms'), (int, float))]
+    if not succ:
+        st.write("(データなし)")
+    else:
+        # 直近100件で統計
+        succ = succ[-100:]
+        lat = [float(e.get('latency_ms', float('nan'))) for e in succ]
+        lat = [v for v in lat if np.isfinite(v)]
+        if not lat:
+            st.write("(レイテンシ値なし)")
+        else:
+            def _pct(a, q):
+                try:
+                    return float(np.percentile(a, q))
+                except Exception:
+                    return float('nan')
+            avg = float(np.mean(lat)) if lat else float('nan')
+            p50 = _pct(lat, 50)
+            p95 = _pct(lat, 95)
+            p99 = _pct(lat, 99)
+            mx  = float(np.max(lat)) if lat else float('nan')
+            # しきい値（セッションに保存）
+            st.session_state.setdefault('lat_avg_warn', 4000)
+            st.session_state.setdefault('lat_p95_warn', 8000)
+            th1, th2 = st.columns(2)
+            with th1:
+                st.session_state['lat_avg_warn'] = st.number_input("avg 警告(ms)", 0, 120000, int(st.session_state['lat_avg_warn']), 100)
+            with th2:
+                st.session_state['lat_p95_warn'] = st.number_input("p95 警告(ms)", 0, 120000, int(st.session_state['lat_p95_warn']), 100)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("avg(ms)", f"{avg:.0f}")
+                st.metric("p50", f"{p50:.0f}")
+            with c2:
+                st.metric("p95", f"{p95:.0f}")
+                st.metric("p99", f"{p99:.0f}")
+            with c3:
+                st.metric("max", f"{mx:.0f}")
+                st.metric("count", f"{len(lat)}")
+            # 警告表示
+            try:
+                if np.isfinite(avg) and avg >= float(st.session_state['lat_avg_warn']):
+                    st.warning(f"平均レイテンシがしきい値を超過: {avg:.0f}ms >= {float(st.session_state['lat_avg_warn']):.0f}ms")
+                if np.isfinite(p95) and p95 >= float(st.session_state['lat_p95_warn']):
+                    st.warning(f"p95レイテンシがしきい値を超過: {p95:.0f}ms >= {float(st.session_state['lat_p95_warn']):.0f}ms")
+            except Exception:
+                pass
+            # ソース別平均
+            try:
+                df_lat = pd.DataFrame([{**e} for e in succ])
+                if 'source' in df_lat.columns:
+                    grp = df_lat.groupby('source')['latency_ms'].agg(['count','mean']).reset_index()
+                    grp['mean'] = grp['mean'].round(0)
+                    st.caption("ソース別 平均(ms) / 件数")
+                    st.dataframe(grp.rename(columns={'mean':'avg_ms'}), use_container_width=True)
+            except Exception:
+                pass
+            # スパークライン
+            try:
+                st.session_state.setdefault('latency_hist', [])
+                st.session_state['latency_hist'] = (st.session_state['latency_hist'] + lat)[-200:]
+                st.line_chart(pd.Series(st.session_state['latency_hist']), height=80)
+            except Exception:
+                pass
+    # 失敗回数と連続失敗数
+    try:
+        df_all = pd.DataFrame(logs)
+        if not df_all.empty:
+            if 'ts' in df_all.columns:
+                df_all['ts'] = pd.to_datetime(df_all['ts'], utc=True, errors='coerce')
+            now = pd.Timestamp.utcnow().tz_localize('UTC') if pd.Timestamp.utcnow().tz is None else pd.Timestamp.utcnow()
+            recent_24h = df_all
+            if 'ts' in df_all.columns:
+                recent_24h = df_all[df_all['ts'] >= (now - pd.Timedelta(hours=24))]
+            fail_24h = int((recent_24h.get('event') == 'price_fetch_failed').sum()) if 'event' in recent_24h.columns else 0
+            # 連続失敗数（末尾から辿る）
+            consec_fail = 0
+            for rec in reversed(logs):
+                if not isinstance(rec, dict):
+                    continue
+                ev = rec.get('event')
+                if ev == 'price_fetch_failed':
+                    consec_fail += 1
+                elif ev == 'price_fetch_success':
+                    break
+            st.caption(f"直近24h失敗: {fail_24h} 件 / 連続失敗: {consec_fail} 件")
+    except Exception:
+        pass
 
 # --- 直近1–2日 簡易バックテスト（AP/Brier/ECE） ---
 st.sidebar.header("4) クイック評価・チューニング")
@@ -2188,8 +2455,21 @@ def load_data(sym: str, period: str, interval: str,
     そうでなければyfinanceを使用。
     """
     use_oanda_feed = bool(oanda_token and oanda_account)
+
+    # --- 簡易サーキットブレーカ（取得失敗が続く時は一定時間スキップ）---
+    cb = st.session_state.setdefault('feed_cb', {
+        'open_until': 0.0, 'fail_count': 0, 'open_threshold': 5, 'open_seconds': 60.0
+    })
+    now_ts = time.time()
+    if cb.get('open_until', 0.0) > now_ts:
+        st.warning("データ取得サーキットブレーカが開いています（フォールバック/キャッシュを使用）")
+        log_event('cb_open_skip', until=cb['open_until'], corr=st.session_state.get('corr_id'))
+        return pd.DataFrame()
+    # 成功ログの重複を避けるためのフラグ
+    _logged_success = False
     if use_oanda_feed:
         try:
+            t0 = time.time()
             gran_map = {
                 "1m": "M1", "2m": "M2", "5m": "M5", "15m": "M15",
                 "30m": "M30", "60m": "H1", "90m": "H1",  # OANDAに90分足はないのでH1にfallback
@@ -2208,8 +2488,19 @@ def load_data(sym: str, period: str, interval: str,
             headers = {"Authorization": f"Bearer {oanda_token}"}
             params = {"count": count, "granularity": gran, "price": "M", "alignmentTimezone": "UTC"}
 
-            r = requests.get(url, headers=headers, params=params, timeout=10)
-            r.raise_for_status()
+            # リトライ付き取得
+            last_exc = None
+            for attempt in range(3):
+                try:
+                    r = requests.get(url, headers=headers, params=params, timeout=10)
+                    r.raise_for_status()
+                    break
+                except Exception as e:
+                    last_exc = e
+                    time.sleep(0.5 * (2 ** attempt))
+                    r = None
+            if r is None:
+                raise last_exc or RuntimeError("OANDAリクエスト失敗")
             candles = r.json().get("candles", [])
 
             rows = []
@@ -2229,21 +2520,61 @@ def load_data(sym: str, period: str, interval: str,
                 return pd.DataFrame()
             df = pd.DataFrame(rows).set_index("time").sort_index()
             df.index = df.index.tz_convert(JST)
+            latency_ms = int((time.time() - t0) * 1000)
+            log_event('price_fetch_success', source='oanda', symbol=sym, interval=interval, period=period, latency_ms=latency_ms, corr=st.session_state.get('corr_id'))
+            _logged_success = True
             return df
 
         except Exception as e:
+            cb['fail_count'] = cb.get('fail_count', 0) + 1
+            if cb['fail_count'] >= int(cb.get('open_threshold', 5)):
+                cb['open_until'] = now_ts + float(cb.get('open_seconds', 60.0))
+                cb['fail_count'] = 0
+                log_event('cb_open', source='oanda', open_until=cb['open_until'], corr=st.session_state.get('corr_id'))
             st.warning(f"OANDAデータ取得失敗: {e} → yfinanceにフォールバックします。")
 
     # fallback: yfinance
     adj_period = clamp_period_for_interval(period, interval)
-    try:
-        df = yf.Ticker(sym).history(period=adj_period, interval=interval, auto_adjust=False)
-    except Exception:
-        df = pd.DataFrame()
+    # yfinance: リトライ＋ウォッチドッグ（ダウンロードはtimeout未対応のためattempt短縮）
+    df = pd.DataFrame()
+    last_exc = None
+    for attempt in range(3):
+        try:
+            t0 = time.time()
+            # historyは内部でネットワーク呼ぶがtimeout指定がないためウォッチドッグで10s制限
+            df = _run_with_timeout(lambda: yf.Ticker(sym).history(period=adj_period, interval=interval, auto_adjust=False), 10.0)
+            if df is not None and not df.empty:
+                latency_ms = int((time.time() - t0) * 1000)
+                log_event('price_fetch_success', source='yfinance_history', symbol=sym, interval=interval, period=adj_period, latency_ms=latency_ms, corr=st.session_state.get('corr_id'))
+                _logged_success = True
+                break
+            # フォールバック
+            t0 = time.time()
+            df = _run_with_timeout(lambda: yf.download(sym, period=adj_period, interval=interval, auto_adjust=False, progress=False), 10.0)
+            if df is not None and not df.empty:
+                latency_ms = int((time.time() - t0) * 1000)
+                log_event('price_fetch_success', source='yfinance_download', symbol=sym, interval=interval, period=adj_period, latency_ms=latency_ms, corr=st.session_state.get('corr_id'))
+                _logged_success = True
+                break
+        except Exception as e:
+            last_exc = e
+        time.sleep(0.5 * (2 ** attempt))
     if df is None or df.empty:
-        df = yf.download(sym, period=adj_period, interval=interval, auto_adjust=False, progress=False)
-    if df is None or df.empty:
+        cb['fail_count'] = cb.get('fail_count', 0) + 1
+        if cb['fail_count'] >= int(cb.get('open_threshold', 5)):
+            cb['open_until'] = now_ts + float(cb.get('open_seconds', 60.0))
+            cb['fail_count'] = 0
+            log_event('cb_open', source='yfinance', open_until=cb['open_until'], corr=st.session_state.get('corr_id'))
+        if last_exc:
+            st.warning(f"yfinance取得失敗: {last_exc}")
         return pd.DataFrame()
+    # 成功時はCBを閉じる
+    cb['fail_count'] = 0
+    if cb.get('open_until', 0.0) > 0:
+        log_event('cb_close', corr=st.session_state.get('corr_id'))
+    cb['open_until'] = 0.0
+    if not _logged_success:
+        log_event('price_fetch_success', source=('oanda' if use_oanda_feed else 'yfinance'), symbol=sym, interval=interval, period=adj_period, corr=st.session_state.get('corr_id'))
     return normalize_ohlcv(df, sym)
 
 
@@ -2256,12 +2587,19 @@ with st.spinner("データ取得中..."):
     oanda_token = st.session_state.get("oanda_token", "")
     oanda_account = st.session_state.get("oanda_account", "")
     oanda_env = st.session_state.get("oanda_env", "practice")
+    # 相関ID生成
+    corr = st.session_state.get('corr_id')
+    if not corr:
+        corr = f"corr-{int(time.time()*1000)}"
+        st.session_state['corr_id'] = corr
 
     def fetch_prices(symbol, period_raw, interval, oanda_token, oanda_account, oanda_env):
         return load_data(symbol, period_raw, interval, oanda_token, oanda_account, oanda_env)
 
+    log_event('price_fetch_start', corr=corr, symbol=symbol, period=period_raw, interval=interval)
     df, err = safe_call(fetch_prices, symbol, period_raw, interval, oanda_token, oanda_account, oanda_env)
     if err or df is None or df.empty:
+        log_event('price_fetch_failed', corr=corr, error=str(err) if err else 'empty')
         st.error(f"[price] 取得失敗: {err if err else 'データなし'}")
         st.stop()
     # --- ここでJST統一 ---
@@ -2287,43 +2625,15 @@ except Exception as e:
     st.session_state['drift_meta'] = st.session_state.get('drift_meta', {})
 
 # ---------------- 極値 & レベル ----------------
-def swing_pivots(df: pd.DataFrame, look: int):
-    highs = df["high"].rolling(look, center=True).max()
-    lows  = df["low"].rolling(look, center=True).min()
-    pivot_high = df[(df["high"] == highs)].dropna(subset=["high"])
-    pivot_low  = df[(df["low"]  == lows )].dropna(subset=["low"])
-    return pivot_high, pivot_low
+from utils.ta import swing_pivots
 
-def horizontal_levels(pivot_high: pd.DataFrame, pivot_low: pd.DataFrame, eps: float, min_samples: int):
-    prices = np.r_[pivot_high["high"].values, pivot_low["low"].values].reshape(-1,1)
-    if len(prices) == 0: return []
-    # epsを自動調整: 過去価格の標準偏差の5%程度を初期値に
-    auto_eps = float(np.std(prices)) * 0.05 if eps is None or eps <= 0 else eps
-    auto_min_samples = max(3, min_samples)
-    labels = DBSCAN(eps=auto_eps, min_samples=auto_min_samples).fit(prices).labels_
-    levels = []
-    for lab in set(labels) - {-1}:
-        lv = prices[labels==lab].mean()
-        levels.append(float(lv))
-    # 近すぎる水準は間引く
-    levels = sorted(set([round(lv, 3) for lv in levels]))
-    return levels
+from utils.ta import horizontal_levels
 
 pivot_high, pivot_low = swing_pivots(df, look)
 levels = horizontal_levels(pivot_high, pivot_low, eps=eps, min_samples=min_samples)
 
 # ---------------- 回帰トレンド & チャネル ----------------
-def regression_trend(df: pd.DataFrame, lookback: int, use="low"):
-    sub = df.tail(lookback)
-    y = sub[use].values
-    x = np.arange(len(y))
-    if len(x) < 2: return None
-    m, b = np.polyfit(x, y, 1)
-    t0, t1 = sub.index[0], sub.index[-1]
-    y0, y1 = b, m*(len(x)-1) + b
-    resid = y - (m*x + b)
-    sigma = float(np.std(resid))
-    return dict(x0=t0, y0=y0, x1=t1, y1=y1, slope=m, intercept=b, sigma=sigma, n=len(x))
+from utils.ta import regression_trend
 
 trend = regression_trend(df, reg_lookback, use="low")
 
@@ -2545,7 +2855,9 @@ else:
 
 # --- 重要イベントの自動強化（ハード化/窓拡大）---
 try:
-    if 'auto_harden' in locals() and auto_harden and (news_df is not None) and not news_df.empty:
+    # Feature Flag: 自動ハード化をグローバルに許可するか（デフォルトON）
+    st.session_state.setdefault('allow_auto_harden', True)
+    if st.session_state.get('allow_auto_harden', True) and 'auto_harden' in locals() and auto_harden and (news_df is not None) and not news_df.empty:
         # 今から見て前後の一定時間は、最低限のハード窓を確保
         now = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index)>0 else pd.Timestamp.now(tz=JST)
         # 対象イベント: 重要度4以上、これから±window内
@@ -2567,9 +2879,15 @@ try:
                 else:
                     windows_df = extra
                 windows_df = windows_df.sort_values('start').reset_index(drop=True)
-                # ハード抑制がOFFでも自動で一時ONにする（事故防止）
-                st.session_state['apply_news_filter'] = True
-                st.info("重要イベント前後は自動でハード抑制を強化しています（設定で無効可）")
+                # ハード抑制はユーザ意図を尊重し、強制ONせず、監査ログとトーストのみ
+                st.session_state.setdefault('news_auto_harden_audit', [])
+                st.session_state['news_auto_harden_audit'].append({
+                    'ts': str(pd.Timestamp.utcnow()),
+                    'count': len(rows),
+                    'min_before': int(auto_harden_min_before),
+                    'min_after': int(auto_harden_min_after)
+                })
+                st.toast("重要イベント前後の窓を拡張しました（自動強化）", icon="🟥")
 except Exception as e:
     st.warning(f"自動強化処理で問題が発生: {e}")
 
@@ -3409,6 +3727,216 @@ def detect_flag_pennant(df, lookback=220, Npush=30, min_flag_bars=8, max_flag_ba
         direction_bias=direction_bias
     )]
 
+def detect_asia_box_break(
+    df: pd.DataFrame,
+    *,
+    asia_start: str = "09:00",
+    asia_end: str = "15:45",
+    london_open_bst: str = "16:00",
+    london_open_gmt: str = "17:00",
+    break_buffer: float = 0.05,   # 5 pip
+    retest_offset: float = 0.02,  # 指値押し/戻りのバッファ
+    sl_buffer_min: float = 0.02,  # 2 pip
+    sl_buffer_max: float = 0.05,  # 5 pip
+    atr_window: int = 14,
+    min_range_pips: float = 0.15,     # 15 pip（USDJPY: 0.01=1pip）
+    min_range_atrK: float = 0.8,      # min Range >= max(0.15, ATR14*0.8)
+    max_range_atrK: float = 2.5,      # max Range <= ATR14*2.5
+    wickiness_max: float = 0.6,
+    vol_ratio_min: float = 0.8,       # 箱期間のATR14 / 直近20日メディアンATR
+    news_block_minutes: int = 60,
+    consider_dst: bool = True,
+    now_ts: pd.Timestamp | None = None,
+    windows_df: pd.DataFrame | None = None,
+    entry_modes: tuple[str,...] = ("close_break","retest_limit","stop_pending"),
+    tz: str = "Asia/Tokyo",
+    lookback_days: int = 5,
+) -> list[Pattern]:
+    """アジア時間のボックスを計算し、ロンドン前後のブレイクをパターン化。
+    返り値は Pattern（kind: asia_box / asia_box_bull / asia_box_bear）。
+    params には AsiaHigh/AsiaLow/Range/entry候補/SL/TP 等を格納。
+    """
+    try:
+        if df.empty:
+            return []
+        df2 = df.copy()
+        if not np.issubdtype(df2.index.dtype, np.datetime64):
+            if "timestamp" in df2.columns:
+                df2 = df2.set_index(pd.to_datetime(df2["timestamp"]))
+            else:
+                return []
+        # タイムゾーン
+        if df2.index.tz is None:
+            df2.index = df2.index.tz_localize(tz)
+        else:
+            df2.index = df2.index.tz_convert(tz)
+
+        # 当日（もしくは now_ts 基準日）
+        now_ts = now_ts or pd.Timestamp.now(tz=df2.index.tz)
+        day = now_ts.normalize()
+
+        t_asia_start = pd.Timestamp(f"{day.date()} {asia_start}", tz=df2.index.tz)
+        t_asia_end   = pd.Timestamp(f"{day.date()} {asia_end}",   tz=df2.index.tz)
+
+        # アジア箱のデータ
+        asia = df2[(df2.index >= t_asia_start) & (df2.index <= t_asia_end)]
+        if asia.empty or len(asia) < 5:
+            return []
+
+        AsiaHigh = float(asia["high"].max())
+        AsiaLow  = float(asia["low"].min())
+        Range    = float(AsiaHigh - AsiaLow)
+
+        # 箱期間の wickiness（平均ヒゲ率）
+        high = asia["high"].astype(float)
+        low  = asia["low"].astype(float)
+        open_ = asia["open"].astype(float)
+        close = asia["close"].astype(float)
+        body_max = pd.concat([open_, close], axis=1).max(axis=1)
+        body_min = pd.concat([open_, close], axis=1).min(axis=1)
+        upper_wick = (high - body_max).clip(lower=0)
+        lower_wick = (body_min - low).clip(lower=0)
+        denom = (high - low).replace(0, np.nan)
+        wickiness = float(((upper_wick + lower_wick) / denom).mean()) if denom.notna().any() else 1.0
+        if wickiness > float(wickiness_max):
+            return []
+
+        # ATR 指標
+        pc = df2["close"].astype(float).shift(1)
+        tr = pd.concat([
+            (df2["high"]-df2["low"]).abs(),
+            (df2["high"]-pc).abs(),
+            (df2["low"]-pc).abs()
+        ], axis=1).max(axis=1)
+        atr14 = tr.rolling(atr_window, min_periods=max(8, atr_window//2)).mean().ffill()
+        atr14_asia = float(atr14.loc[asia.index].median()) if not atr14.loc[asia.index].empty else float("nan")
+        # 直近20日メディアンATR（20日= 約96本/日×20=1920本 だが、15mなら 96*20）
+        # 手元データに応じて最大でも直近10,000本程度で代用
+        lookback_bars = min(len(df2), 96*20)
+        atr14_med20d = float(atr14.tail(lookback_bars).median()) if lookback_bars >= atr_window else float("nan")
+        if np.isfinite(atr14_asia) and np.isfinite(atr14_med20d) and atr14_med20d > 0:
+            vol_ratio = atr14_asia / atr14_med20d
+            if vol_ratio < float(vol_ratio_min):
+                return []
+
+        # Range フィルタ
+        min_range = max(float(min_range_pips), float(min_range_atrK) * (atr14_asia if np.isfinite(atr14_asia) else 0.0))
+        max_range = float(max_range_atrK) * (atr14_asia if np.isfinite(atr14_asia) else np.inf)
+        if Range < min_range or Range > max_range:
+            return []
+
+        # 前倒しブレイク（箱確定前に明確に外へ）
+        pre = df2[(df2.index >= t_asia_start) & (df2.index < t_asia_end)]
+        if not pre.empty:
+            if (pre["close"] > AsiaHigh + break_buffer).any() or (pre["close"] < AsiaLow - break_buffer).any():
+                return []
+
+        # ニュース抑制（±news_block_minutes）: windows_df が指定されていれば利用
+        def _in_news(ts: pd.Timestamp) -> bool:
+            try:
+                from is_in_any_window import is_in_any_window
+                return bool(is_in_any_window(pd.Series([ts]), windows_df[["start","end"]])[0]) if (windows_df is not None and not windows_df.empty) else False
+            except Exception:
+                return False
+
+        # ロンドン始値付近のウィンドウ（BST/GMT）
+        # 仕様でエントリーは 15:45～16:45（BST）または 15:45～17:45（GMT）
+        def is_bst(d: pd.Timestamp) -> bool:
+            if not consider_dst:
+                return True
+            m = d.month
+            # 簡易判定: 4–10月をBSTとみなす（厳密な最終日曜計算は割愛）
+            return 4 <= m <= 10
+
+        if is_bst(day):
+            open_start = pd.Timestamp(f"{day.date()} 15:45", tz=df2.index.tz)
+            open_end   = pd.Timestamp(f"{day.date()} 16:45", tz=df2.index.tz)
+        else:
+            open_start = pd.Timestamp(f"{day.date()} 15:45", tz=df2.index.tz)
+            open_end   = pd.Timestamp(f"{day.date()} 17:45", tz=df2.index.tz)
+
+        # 現在値（直近バー）でのクローズ判定
+        last_row = df2.iloc[-1]
+        last_ts: pd.Timestamp = last_row.name
+        last_close = float(last_row["close"])
+        in_window = (open_start <= last_ts <= open_end)
+
+        patterns: list[Pattern] = []
+        base_params = {
+            "AsiaHigh": AsiaHigh,
+            "AsiaLow": AsiaLow,
+            "Range": Range,
+            "asia_start": str(t_asia_start),
+            "asia_end": str(t_asia_end),
+            "entry_window_start": str(open_start),
+            "entry_window_end": str(open_end),
+            "break_buffer": float(break_buffer),
+            "retest_offset": float(retest_offset),
+            "atr14_asia": float(atr14_asia) if np.isfinite(atr14_asia) else None,
+        }
+
+        # ① クローズブレイク型
+        if "close_break" in entry_modes and in_window and not _in_news(last_ts):
+            if last_close > AsiaHigh + break_buffer:
+                entry = max(last_close, AsiaHigh + break_buffer)
+                sl = min(AsiaLow - sl_buffer_min, entry - max(sl_buffer_min, 0.8*(atr14_asia if np.isfinite(atr14_asia) else 0.0)))
+                tp1 = entry + Range
+                tp2 = entry + 2.5 * max(1e-9, entry - sl)
+                q = 60.0
+                q += min(20.0, (Range / max(1e-9, atr14_asia)) * 4.0) if np.isfinite(atr14_asia) and atr14_asia>0 else 5.0
+                patterns.append(Pattern(
+                    kind="asia_box_bull",
+                    t_start=t_asia_start, t_end=last_ts,
+                    params={**base_params, "mode":"close_break","entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2},
+                    quality=float(min(99.0, q)),
+                    direction_bias="up"
+                ))
+            elif last_close < AsiaLow - break_buffer:
+                entry = min(last_close, AsiaLow - break_buffer)
+                sl = max(AsiaHigh + sl_buffer_min, entry + max(sl_buffer_min, 0.8*(atr14_asia if np.isfinite(atr14_asia) else 0.0)))
+                tp1 = entry - Range
+                tp2 = entry - 2.5 * max(1e-9, sl - entry)
+                q = 60.0
+                q += min(20.0, (Range / max(1e-9, atr14_asia)) * 4.0) if np.isfinite(atr14_asia) and atr14_asia>0 else 5.0
+                patterns.append(Pattern(
+                    kind="asia_box_bear",
+                    t_start=t_asia_start, t_end=last_ts,
+                    params={**base_params, "mode":"close_break","entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2},
+                    quality=float(min(99.0, q)),
+                    direction_bias="down"
+                ))
+
+        # ② リテスト指値型（シグナル化のみ：将来充足の条件を param に載せる）
+        if "retest_limit" in entry_modes:
+            bull_level = AsiaHigh + retest_offset
+            bear_level = AsiaLow - retest_offset
+            patterns.append(Pattern(
+                kind="asia_box",
+                t_start=t_asia_start, t_end=t_asia_end,
+                params={**base_params, "mode":"retest_limit","buy_limit":bull_level,"sell_limit":bear_level},
+                quality=50.0,
+                direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
+            ))
+
+        # ③ ストップ注文先置き型（指定時間内の条件）
+        if "stop_pending" in entry_modes and in_window and not _in_news(last_ts):
+            buy_stop = AsiaHigh + break_buffer
+            sell_stop = AsiaLow - break_buffer
+            # 16:30（BST想定）までの期限の目安もメモ
+            deadline = pd.Timestamp(f"{day.date()} 16:30", tz=df2.index.tz) if is_bst(day) else pd.Timestamp(f"{day.date()} 17:30", tz=df2.index.tz)
+            patterns.append(Pattern(
+                kind="asia_box",
+                t_start=open_start, t_end=open_end,
+                params={**base_params, "mode":"stop_pending","buy_stop":buy_stop,"sell_stop":sell_stop,"deadline":str(deadline)},
+                quality=55.0,
+                direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
+            ))
+
+        return patterns
+    except Exception as e:
+        print(f"detect_asia_box_break error: {e}")
+        return []
+
 def detect_head_shoulders(
     df: pd.DataFrame,
     piv_high: pd.DataFrame,
@@ -3692,6 +4220,10 @@ def measured_targets(p: Pattern):
     if kind in ("flag_up","flag_dn","pennant"):
         pole = float(params.get("pole_abs", 0.0))
         return dict(up=+pole, down=-pole)
+    # Asia Box Break（レンジ投影 or R固定の基礎幅 = Range）
+    if kind in ("asia_box", "asia_box_bull", "asia_box_bear"):
+        rng = float(params.get("range", params.get("Range", 0.0)) or 0.0)
+        return dict(up=+rng, down=-rng)
     if kind in ("head_shoulders","inverse_head_shoulders"):
         neck = params.get("neck")
         head = params.get("head")
@@ -3710,10 +4242,11 @@ def measured_targets(p: Pattern):
 st.sidebar.markdown("---")
 st.sidebar.subheader("パターン検出")
 enable_tri    = st.sidebar.checkbox("トライアングル（対称/上昇/下降）", True)
-enable_rect   = st.sidebar.checkbox("レクタングル（ボックス）", True)
+enable_rect   = st.sidebar.checkbox("レクタングル（ボックス）", False)
 enable_double = st.sidebar.checkbox("ダブルトップ / ダブルボトム", True)
 enable_flag   = st.sidebar.checkbox("フラッグ / ペナント", True)
 enable_hs     = st.sidebar.checkbox("ヘッド＆ショルダーズ（逆含む）", True)
+enable_asia   = st.sidebar.checkbox("アジア箱ブレイク（ロンドン）", True)
 
 st.sidebar.subheader("パターンごとの直近本数")
 tri_lookback = st.sidebar.slider("トライアングル（対称/上昇/下降）", 20, 600, 125, 5)
@@ -3733,6 +4266,17 @@ hs_lookback = st.sidebar.slider("ヘッド＆ショルダーズ（逆含む）",
 pat_min_touches = st.sidebar.slider("最小接触回数（線へのタッチ数）", 2, 5, 2)
 pat_tol_price = st.sidebar.number_input("価格許容誤差（ダブル/ボックス）", value=0.10, step=0.05)
 
+# Asia Box 設定
+st.sidebar.caption("— アジア箱ブレイク 設定 —")
+asia_start_jst = st.sidebar.text_input("アジア開始(JST)", value="09:00")
+asia_end_jst   = st.sidebar.text_input("アジア終了(JST)", value="15:45")
+asia_break_buffer = st.sidebar.number_input("ブレイクバッファ(pip)", value=0.05, step=0.01)
+asia_wickiness_max = st.sidebar.slider("平均ヒゲ率の上限", 0.2, 0.9, 0.6, 0.05)
+asia_min_range_pips = st.sidebar.number_input("最小箱幅(USDJPY=0.01=1pip)", value=0.15, step=0.01)
+asia_min_range_atrK = st.sidebar.number_input("最小箱幅(ATR倍)", value=0.8, step=0.1)
+asia_max_range_atrK = st.sidebar.number_input("最大箱幅(ATR倍)", value=2.5, step=0.1)
+asia_news_block_min = st.sidebar.slider("ニュース前後ノートレード(分)", 0, 120, 60, 5)
+
 # Flag/Pennant パラメータ
 st.sidebar.caption("— フラッグ/ペナント 設定 —")
 flag_Npush = st.sidebar.slider("旗竿推定 Npush（本）", 10, 60, 30, 2)
@@ -3746,6 +4290,14 @@ st.sidebar.caption("— ヘッド＆ショルダーズ 設定 —")
 hs_tol = st.sidebar.slider("肩の高さ許容（比率）", 0.001, 0.02, 0.003, 0.001)
 
 # ---- パターン検出実行 ----
+
+# 表示補助（パターン）
+st.sidebar.markdown("---")
+st.sidebar.subheader("表示補助（パターン）")
+pattern_highlight_latest = st.sidebar.checkbox("最新検出の強調表示（vrect）", value=True)
+pattern_auto_zoom_latest = st.sidebar.checkbox("最新へオートズーム", value=False,
+    help="時間軸（非カテゴリ）でのみ適用。該当区間の前後に少し余白を持たせてズームします。")
+
 patterns = []
 try:
     double_patterns = []
@@ -3808,6 +4360,22 @@ try:
         patterns += patterns_df.to_dict('records')
     if enable_hs:
         patterns += detect_head_shoulders(df, pivot_high, pivot_low, lookback=hs_lookback, tol=hs_tol)
+    if enable_asia:
+        try:
+            patterns += detect_asia_box_break(
+                df,
+                asia_start=asia_start_jst,
+                asia_end=asia_end_jst,
+                break_buffer=float(asia_break_buffer),
+                wickiness_max=float(asia_wickiness_max),
+                min_range_pips=float(asia_min_range_pips),
+                min_range_atrK=float(asia_min_range_atrK),
+                max_range_atrK=float(asia_max_range_atrK),
+                news_block_minutes=int(asia_news_block_min),
+                windows_df=st.session_state.get('windows_df'),
+            )
+        except Exception as e:
+            st.warning(f"アジア箱検出で問題: {e}")
 except Exception as e:
     st.error(f"パターン検出中にエラー: {e}")
     patterns = []
@@ -4082,6 +4650,75 @@ if trend:
 
 # パターン描画
 
+def _safe_sub_df(df: pd.DataFrame, start, end) -> pd.DataFrame:
+    """df から [start:end] の区間を安全に抽出。
+    - DatetimeIndex: できるだけ .loc のスライス、失敗時は最近傍 indexer で iloc
+    - 整数: 位置ベース iloc
+    - いずれも空になった場合は末尾10%相当でフォールバック
+    """
+    try:
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df
+        idx = df.index
+        # 位置ベース候補
+        def _by_pos(i0, i1):
+            i0 = max(0, int(i0)); i1 = min(len(df)-1, int(i1))
+            if i0 > i1: i0, i1 = i1, i0
+            return df.iloc[i0:i1+1]
+
+        # 整数の場合
+        if isinstance(start, (int, np.integer)) and isinstance(end, (int, np.integer)):
+            sub = _by_pos(start, end)
+            if not sub.empty:
+                return sub
+        # Datetime の場合
+        if isinstance(idx, pd.DatetimeIndex):
+            tz = idx.tz
+            def _to_ts(x):
+                if isinstance(x, pd.Timestamp):
+                    if (x.tz is None) and (tz is not None):
+                        return x.tz_localize(tz)
+                    if (x.tz is not None) and (tz is not None) and (x.tz != tz):
+                        return x.tz_convert(tz)
+                    return x
+                try:
+                    t = pd.to_datetime(x)
+                    if getattr(t, 'tz', None) is None and tz is not None:
+                        t = t.tz_localize(tz)
+                    return t
+                except Exception:
+                    return None
+            s = _to_ts(start); e = _to_ts(end)
+            if s is not None and e is not None:
+                try:
+                    sub = df.loc[s:e]
+                    if not sub.empty:
+                        return sub
+                except Exception:
+                    pass
+                # 最近傍インデクサ
+                try:
+                    i0 = idx.get_indexer([s], method='nearest')[0]
+                    i1 = idx.get_indexer([e], method='nearest')[0]
+                    sub = _by_pos(i0, i1)
+                    if not sub.empty:
+                        return sub
+                except Exception:
+                    pass
+        # その他: 文字列のときに loc を試す
+        try:
+            sub = df.loc[start:end]
+            if isinstance(sub, pd.DataFrame) and not sub.empty:
+                return sub
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # 最後の砦: 末尾10%（最低3本）
+    n = len(df)
+    take = max(3, int(n * 0.10))
+    return df.tail(take)
+
 def _line_points(i1, i2, slope, intercept):
     xs = np.array([i1, i2], dtype=float)
     ys = slope * xs + intercept
@@ -4126,7 +4763,7 @@ if 'rect_df' in locals():
 
 def _draw_rectangle(fig, p: Pattern):
     params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
-    sub = df.loc[params["sub_start"] : params["sub_end"]]
+    sub = _safe_sub_df(df, params.get("sub_start"), params.get("sub_end"))
     up = params["upper"]; dn = params["lower"]
     fig.add_hrect(y0=dn, y1=up, x0=sub.index[0], x1=sub.index[-1],
                   line_width=0, fillcolor="rgba(67,160,71,0.12)")
@@ -4164,7 +4801,7 @@ def _draw_double(fig, p: Pattern):
 
 def _draw_flag(fig, p: Pattern):
     params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
-    sub = df.loc[params["sub_start"] : params["sub_end"]]
+    sub = _safe_sub_df(df, params.get("sub_start"), params.get("sub_end"))
     x = np.arange(len(sub))
     m = params["slope"]; b = params["intercept"]; s = params["sigma"]; k = params["band_k"]
     y_mid = m*x + b
@@ -4174,6 +4811,49 @@ def _draw_flag(fig, p: Pattern):
                              line=dict(color=COLOR_FLAG, width=2, dash="dot"), showlegend=False))
     fig.add_trace(go.Scatter(x=sub.index, y=y_dn, mode="lines", name="flag_dn",
                              line=dict(color=COLOR_FLAG, width=2, dash="dot"), showlegend=False))
+    # 描画デバッグログ
+    try:
+        log_event('pattern_draw', kind=(p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None)),
+                  t_start=str(p.get('t_start') if isinstance(p, dict) else getattr(p, 't_start', None)),
+                  t_end=str(p.get('t_end') if isinstance(p, dict) else getattr(p, 't_end', None)),
+                  sub_len=int(len(sub)), quality=float(p.get('quality') if isinstance(p, dict) else getattr(p, 'quality', 0.0)))
+    except Exception:
+        pass
+
+def _draw_asia_box(fig, p: Pattern):
+    import plotly.graph_objects as go
+    params = p if isinstance(p, dict) else getattr(p, 'params', {})
+    if not params:
+        return
+    ah = float(params.get('AsiaHigh', params.get('AsiaHigh'.lower(), np.nan)))
+    al = float(params.get('AsiaLow', params.get('AsiaLow'.lower(), np.nan)))
+    t0 = pd.to_datetime(params.get('asia_start', p.t_start))
+    t1 = pd.to_datetime(params.get('asia_end', p.t_end))
+    color = '#8e24aa'  # 紫
+    # 箱の水平線
+    fig.add_hline(y=ah, line=dict(color=color, width=2, dash='dash'))
+    fig.add_hline(y=al, line=dict(color=color, width=2, dash='dash'))
+    # 垂直帯（箱期間）
+    try:
+        fig.add_vrect(x0=t0, x1=t1, fillcolor=color, opacity=0.06, line_width=0)
+    except Exception:
+        pass
+    # 目安レベル（各モードのエントリー）
+    mode = params.get('mode')
+    if mode == 'close_break':
+        ent = params.get('entry')
+        if ent is not None:
+            fig.add_hline(y=float(ent), line=dict(color=color, width=1))
+    elif mode == 'retest_limit':
+        for k in ('buy_limit','sell_limit'):
+            v = params.get(k)
+            if v is not None:
+                fig.add_hline(y=float(v), line=dict(color=color, width=1, dash='dot'))
+    elif mode == 'stop_pending':
+        for k in ('buy_stop','sell_stop'):
+            v = params.get(k)
+            if v is not None:
+                fig.add_hline(y=float(v), line=dict(color=color, width=1, dash='dot'))
 
 def _draw_hs(fig, p: Pattern):
     params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
@@ -4228,8 +4908,52 @@ for p in patterns_sorted:
         _draw_double(fig, p)
     elif kind in ("flag_up","flag_dn","pennant"):
         _draw_flag(fig, p)
+    elif kind.startswith("asia_box"):
+        _draw_asia_box(fig, p)
     elif kind in ("head_shoulders","inverse_head_shoulders"):
         _draw_hs(fig, p)
+
+# --- 最新パターンの区間をハイライト（vrect）＆オートズーム ---
+def _latest_pattern_window(pats: list) -> tuple[pd.Timestamp|None, pd.Timestamp|None, str|None]:
+    if not pats:
+        return None, None, None
+    # t_end が最大のものを採用（最も新しい検出）
+    def _t_end(x):
+        return x.get('t_end') if isinstance(x, dict) else getattr(x, 't_end', None)
+    def _t_start(x):
+        return x.get('t_start') if isinstance(x, dict) else getattr(x, 't_start', None)
+    cand = [x for x in pats if _t_end(x) is not None]
+    if not cand:
+        return None, None, None
+    latest = max(cand, key=lambda x: _t_end(x))
+    t0 = _t_start(latest); t1 = _t_end(latest)
+    kind = latest.get('kind') if isinstance(latest, dict) else getattr(latest, 'kind', None)
+    return t0, t1, kind
+
+try:
+    if pattern_highlight_latest and patterns:
+        t0, t1, kind = _latest_pattern_window(patterns)
+        if t0 is not None and t1 is not None:
+            fig.add_vrect(x0=t0, x1=t1, line_width=0, fillcolor="rgba(255, 235, 59, 0.15)",
+                          annotation_text=f"latest {kind}", annotation_position="top left")
+            try:
+                log_event('pattern_vrect', kind=str(kind), t_start=str(t0), t_end=str(t1))
+            except Exception:
+                pass
+            # オートズーム（カテゴリ軸では適用しない）
+            if pattern_auto_zoom_latest and not compact_weekend:
+                try:
+                    w = (t1 - t0)
+                    pad = pd.Timedelta(minutes=30) if not isinstance(w, pd.Timedelta) or w <= pd.Timedelta(0) else max(pd.Timedelta(minutes=10), w * 0.30)
+                    fig.update_xaxes(range=[t0 - pad, t1 + pad])
+                    try:
+                        log_event('pattern_auto_zoom', kind=str(kind), t_start=str(t0), t_end=str(t1), pad=str(pad))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+except Exception:
+    pass
 
 # ---- 赤影（重要度別ウィンドウ）を重ねる ----
 if use_news_shade and not windows_df.empty:
@@ -4268,6 +4992,11 @@ def _pattern_levels_for_prob(df, p: Pattern):
         upper_level, lower_level = None, float(params["neck"])
     elif kind=="inverse_head_shoulders":
         upper_level, lower_level = float(params["neck"]), None
+    elif kind and kind.startswith("asia_box"):
+        try:
+            upper_level, lower_level = float(params.get("AsiaHigh")), float(params.get("AsiaLow"))
+        except Exception:
+            pass
 
     return upper_level, lower_level
 
