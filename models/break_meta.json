@@ -88,8 +88,8 @@
     "embargo": 1
   },
   "random_state": 42,
-  "trained_at": 1758376900,
-  "trained_at_iso": "2025-09-20T14:01:40.596190+00:00",
+  "trained_at": 1759065425,
+  "trained_at_iso": "2025-09-28T13:17:05.670098+00:00",
   "ev_cost_sensitivity": {
     "0.02": {
       "theta": 0.95,
