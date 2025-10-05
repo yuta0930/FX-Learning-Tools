@@ -1632,7 +1632,6 @@ compact_weekend = st.sidebar.checkbox(
 st.session_state.setdefault('preserve_zoom', True)
 st.sidebar.checkbox(
     "自動更新時にズームを保持",
-    value=st.session_state.get('preserve_zoom', True),
     help="自動更新しても、直前のズーム・パン・可視トレース状態を維持します。",
     key="preserve_zoom",
 )
