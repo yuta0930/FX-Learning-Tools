@@ -2,6 +2,28 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+# Centralized timezone helpers
+from utils.time_utils import JST, to_jst
+
+# Initialize session state once
+def init_session_state():
+    st.session_state.setdefault('prob_buffer', [])
+    st.session_state.setdefault('enable_trading', False)
+    st.session_state.setdefault('auto_pause_on_drift', True)
+    st.session_state.setdefault('drift_state', 'normal')
+    st.session_state.setdefault('gate_stats', {'total': 0, 'trade_ok_count': 0, 'pass_rate': None})
+    st.session_state.setdefault('gate_pass_hist', [])
+    st.session_state.setdefault('apply_news_filter', False)
+    # θ/ドリフト関連のよく参照する値
+    st.session_state.setdefault('theta_base', 0.60)
+    st.session_state.setdefault('theta_min', 0.40)
+    st.session_state.setdefault('theta_max', 0.85)
+    st.session_state.setdefault('theta_target_cov', 0.08)
+    st.session_state.setdefault('use_adaptive_theta', False)
+    st.session_state.setdefault('theta_drift_bump_active', False)
+    st.session_state.setdefault('theta_bump_drift', 0.03)
+
+init_session_state()
 
 # === 共通処理関数 ===
 def update_prob_buffer(prob_df):
@@ -232,6 +254,7 @@ with col2:
 # 0.25〜0.35に収まっているかを確認し、外れる場合は次回学習でtarget_covを微調整
 # --- ニュース抑制ウィンドウを注文ゲートに反映 ---
 from is_in_any_window import is_in_any_window
+from policy.gate import apply_final_gate as _apply_final_gate_core
 
 # pred_df, windows_dfが揃ったタイミングで以下を必ず通す
 # pred_df: [timestamp, proba, theta, signal, ...]
@@ -275,67 +298,129 @@ def apply_final_gate(pred_df: pd.DataFrame,
                      signal_col: str = 'signal',
                      ts_col: str = 'timestamp',
                      add_columns: bool = True) -> pd.DataFrame:
-    """注文ゲートを一括適用し、trade_ok 列を付与する。
-    - 運用モード（enable_trading）
-    - Drift 自動停止（alert かつ auto_pause）
-    - Guard（in_cooldown のとき停止）
-    - ニュース（ハード抑制のときに停止）
-    ソフト抑制は最終θに織り込む方針のため、ここではブロックしない。
+    """Streamlit-wrapper that delegates to policy.gate.apply_final_gate.
+    Keeps session_state side-effects (stats history) and UI-specific columns.
     """
-    if not isinstance(pred_df, pd.DataFrame) or pred_df.empty:
-        return pred_df
-    df_out = pred_df.copy()
-    # ニュース窓（ハード抑制）
-    apply_news_filter = bool(st.session_state.get('apply_news_filter', False))
-    in_news = None
-    if apply_news_filter and windows_df is not None and not windows_df.empty and ts_col in df_out.columns:
-        try:
-            in_news = is_in_any_window(df_out[ts_col], windows_df[["start","end"]])
-            df_out['in_news'] = in_news
-        except Exception:
-            in_news = None
-    # Guard
-    tg = st.session_state.get('trade_guard')
-    guard_ok = True
-    try:
-        if tg is not None:
-            s = tg.state()
-            guard_ok = not bool(s.get('in_cooldown', False))
-    except Exception:
-        guard_ok = True
-    # ドリフト自動停止
-    drift_block = bool(st.session_state.get('auto_pause_on_drift', True) and (st.session_state.get('drift_state') == 'alert'))
-    # 運用モード
-    enable = bool(st.session_state.get('enable_trading', False))
-    # シグナル列
-    sig = df_out[signal_col] if signal_col in df_out.columns else True
-    # ハードニュースのブロック条件
-    news_block = False
-    if apply_news_filter and isinstance(in_news, (pd.Series, np.ndarray, list)):
-        news_block = in_news
-    elif apply_news_filter:
-        news_block = False
-    # 最終ゲート
-    gate = enable and guard_ok and (not drift_block)
-    df_out['trade_ok'] = gate & (sig.astype(bool)) & (~news_block if isinstance(news_block, (pd.Series, np.ndarray, list)) else (not news_block))
-    # ゲート統計を保存（サマリで表示）
+    state = {
+        'enable_trading': st.session_state.get('enable_trading', False),
+        'auto_pause_on_drift': st.session_state.get('auto_pause_on_drift', True),
+        'drift_state': st.session_state.get('drift_state', 'normal'),
+        'apply_news_filter': st.session_state.get('apply_news_filter', False),
+        'guard_state': (st.session_state.get('trade_guard').state() if st.session_state.get('trade_guard') else {}),
+    }
+    df_out = _apply_final_gate_core(
+        pred_df, windows_df,
+        state=state, signal_col=signal_col, ts_col=ts_col, add_columns=add_columns
+    )
+    # Update gate stats/history
     try:
         total = int(len(df_out))
         ok_cnt = int(df_out['trade_ok'].sum())
         pass_rate = (ok_cnt / total) if total > 0 else None
         st.session_state['gate_stats'] = {'total': total, 'trade_ok_count': ok_cnt, 'pass_rate': pass_rate}
-        # 履歴保存（スパークライン用）
         st.session_state.setdefault('gate_pass_hist', [])
         pr_val = float(pass_rate) if isinstance(pass_rate, (int, float)) and np.isfinite(pass_rate) else np.nan
         st.session_state['gate_pass_hist'] = (st.session_state['gate_pass_hist'] + [pr_val])[-200:]
     except Exception:
         pass
-    if add_columns:
-        df_out['gate_enable'] = enable
-        df_out['gate_guard_ok'] = guard_ok
-        df_out['gate_drift_block'] = drift_block
-        if apply_news_filter:
-            df_out['gate_news_block'] = news_block if isinstance(news_block, (pd.Series, np.ndarray, list)) else bool(news_block)
+
+    # --- Gate直後の推奨（方向別 pat EV を自動反映）---
+    try:
+        # trade_ok 列があればそれを、なければ signal==1 を採用
+        if isinstance(df_out, pd.DataFrame):
+            if 'trade_ok' in df_out.columns:
+                ok_mask = (df_out['trade_ok'] == True)
+            elif signal_col in df_out.columns:
+                ok_mask = (df_out[signal_col] == 1)
+            else:
+                ok_mask = pd.Series([False]*len(df_out), index=df_out.index)
+            ok_rows = df_out.loc[ok_mask]
+        else:
+            ok_rows = pd.DataFrame()
+        if not ok_rows.empty:
+            row = ok_rows.tail(1).iloc[0]
+            ts = row.get(ts_col, None)
+            # 方向推定: dir/side/信号の順で推定
+            dir_label = None
+            for k in ('dir','direction','side'):
+                v = row.get(k) if hasattr(row, 'get') else (row[k] if k in row.index else None)
+                if isinstance(v, str) and v:
+                    s = v.lower()
+                    if s in ('long','buy','bull','up'):
+                        dir_label = 'up'; break
+                    if s in ('short','sell','bear','down'):
+                        dir_label = 'down'; break
+            if dir_label is None:
+                sig = row.get(signal_col) if hasattr(row, 'get') else (row[signal_col] if signal_col in row.index else None)
+                try:
+                    if sig is not None and float(sig) < 0:
+                        dir_label = 'down'
+                    else:
+                        dir_label = 'up'
+                except Exception:
+                    dir_label = 'up'
+
+            # 確率の選択: proba があれば優先、なければ P_up/P_dn から方向に応じて採用
+            p = row.get('proba') if hasattr(row, 'get') else (row['proba'] if 'proba' in row.index else None)
+            if p is None or not isinstance(p, (int,float)):
+                if dir_label == 'up':
+                    p = row.get('P_up') if hasattr(row, 'get') else (row['P_up'] if 'P_up' in row.index else None)
+                else:
+                    p = row.get('P_dn') if hasattr(row, 'get') else (row['P_dn'] if 'P_dn' in row.index else None)
+            if p is None and 'P_up' in row.index and 'P_dn' in row.index:
+                p = float(row['P_up'])
+
+            # θの選択
+            theta_val = row.get('theta') if hasattr(row, 'get') else (row['theta'] if 'theta' in row.index else None)
+            if not isinstance(theta_val, (int,float)):
+                theta_val = get_final_theta(ts=ts, windows_df=windows_df, meta=st.session_state.get('break_meta', {}))
+
+            # in_news 判定
+            in_news_flag = False
+            try:
+                if windows_df is not None and not windows_df.empty and ts is not None:
+                    in_news_flag = bool(is_in_any_window(pd.Series([ts]), windows_df[["start","end"]])[0])
+            except Exception:
+                in_news_flag = False
+
+            # OHLC（最新バー）
+            try:
+                o = float(df['open'].iloc[-1]); h=float(df['high'].iloc[-1]); l=float(df['low'].iloc[-1]); c=float(df['close'].iloc[-1])
+            except Exception:
+                o = h = l = c = np.nan
+
+            # pat EV（方向別）
+            pat_ev = st.session_state.get('pattern_ev_up' if dir_label=='up' else 'pattern_ev_down')
+
+            # 推奨実行
+            from decision_policy import EVConfig
+            p_params = globals().get('params', DecisionParams())
+            action, reasons, theta_eff, evr = recommend_action(
+                p=float(p) if isinstance(p,(int,float)) else 0.0,
+                theta=float(theta_val),
+                session=in_sessions(ts) if ts is not None else 'Other',
+                feat_row={},
+                ohlc=(o,h,l,c),
+                in_news=in_news_flag,
+                spread=0.0,
+                ev_cfg=EVConfig(),
+                params=p_params,
+                pattern_ev_r=pat_ev,
+            )
+            st.session_state['last_recommendation'] = {
+                'ts': str(ts), 'dir': dir_label, 'action': action,
+                'theta_eff': theta_eff, 'evr': evr, 'reasons': reasons,
+            }
+            # コンパクト表示
+            with st.container():
+                st.markdown("**推奨**: " + str(action))
+                if reasons:
+                    st.caption(" / ".join(map(str, reasons[:3])))
+        else:
+            st.session_state['last_recommendation'] = None
+    except Exception:
+        # 推奨はソフトフェイル
+        pass
     return df_out
 
 def prepare_df_feats_for_inference(raw_df: pd.DataFrame) -> pd.DataFrame:
@@ -742,7 +827,10 @@ def backtest_rolling(df: pd.DataFrame,
                      apply_news: bool,
                      signal_mode: str,
                      retest_wait_k_arg: int,
-                     touch_buffer: float
+                     touch_buffer: float,
+                     *,
+                     cost_fn=None,
+                     fill_prob_fn=None
                      ) -> pd.DataFrame:
     """
     ★ 未来情報リーケージを除去したローリング版バックテスト
@@ -791,16 +879,22 @@ def backtest_rolling(df: pd.DataFrame,
                 if (c > lv + break_buffer_arg) and (l1 <= lv):
                     entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                     ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k_arg), float(touch_buffer))
+                    ret = (exitp-entry)/pv_local - spread_pips
+                    if cost_fn: ret -= float(cost_fn(t, entry, exitp, 'long'))
+                    fill_p = float(fill_prob_fn(t, 'long', mode="水平ブレイク上", distance=0.0)) if fill_prob_fn else 1.0
                     rows.append(dict(time=t, mode="水平ブレイク上", level_or_val=float(lv),
                                      dir="long", entry=entry, exit=exitp,
-                                     ret_pips=(exitp-entry)/pv_local - spread_pips,
+                                     ret_pips=ret*fill_p,
                                      retest_index=ri, retest_hit=rh))
                 if (c < lv - break_buffer_arg) and (h1 >= lv):
                     entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                     ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k_arg), float(touch_buffer))
+                    ret = (entry-exitp)/pv_local - spread_pips
+                    if cost_fn: ret -= float(cost_fn(t, entry, exitp, 'short'))
+                    fill_p = float(fill_prob_fn(t, 'short', mode="水平ブレイク下", distance=0.0)) if fill_prob_fn else 1.0
                     rows.append(dict(time=t, mode="水平ブレイク下", level_or_val=float(lv),
                                      dir="short", entry=entry, exit=exitp,
-                                     ret_pips=(entry-exitp)/pv_local - spread_pips,
+                                     ret_pips=ret*fill_p,
                                      retest_index=ri, retest_hit=rh))
 
         elif signal_mode == "トレンドラインブレイク(終値)":
@@ -809,16 +903,22 @@ def backtest_rolling(df: pd.DataFrame,
                 if (c > tl + break_buffer_arg) and (l1 <= tl):
                     entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                     ri, rh = compute_retest(close_s, tl, i, int(retest_wait_k_arg), float(touch_buffer))
+                    ret = (exitp-entry)/pv_local - spread_pips
+                    if cost_fn: ret -= float(cost_fn(t, entry, exitp, 'long'))
+                    fill_p = float(fill_prob_fn(t, 'long', mode="TLブレイク上", distance=0.0)) if fill_prob_fn else 1.0
                     rows.append(dict(time=t, mode="TLブレイク上", level_or_val=float(tl),
                                      dir="long", entry=entry, exit=exitp,
-                                     ret_pips=(exitp-entry)/pv_local - spread_pips,
+                                     ret_pips=ret*fill_p,
                                      retest_index=ri, retest_hit=rh))
                 if (c < tl - break_buffer_arg) and (h1 >= tl):
                     entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                     ri, rh = compute_retest(close_s, tl, i, int(retest_wait_k_arg), float(touch_buffer))
+                    ret = (entry-exitp)/pv_local - spread_pips
+                    if cost_fn: ret -= float(cost_fn(t, entry, exitp, 'short'))
+                    fill_p = float(fill_prob_fn(t, 'short', mode="TLブレイク下", distance=0.0)) if fill_prob_fn else 1.0
                     rows.append(dict(time=t, mode="TLブレイク下", level_or_val=float(tl),
                                      dir="short", entry=entry, exit=exitp,
-                                     ret_pips=(entry-exitp)/pv_local - spread_pips,
+                                     ret_pips=ret*fill_p,
                                      retest_index=ri, retest_hit=rh))
 
         elif signal_mode == "チャネル上抜け/下抜け(終値)":
@@ -828,16 +928,22 @@ def backtest_rolling(df: pd.DataFrame,
                 if c > up + break_buffer_arg:
                     entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                     ri, rh = compute_retest(close_s, up, i, int(retest_wait_k_arg), float(touch_buffer))
+                    ret = (exitp-entry)/pv_local - spread_pips
+                    if cost_fn: ret -= float(cost_fn(t, entry, exitp, 'long'))
+                    fill_p = float(fill_prob_fn(t, 'long', mode="チャネル上抜け", distance=0.0)) if fill_prob_fn else 1.0
                     rows.append(dict(time=t, mode="チャネル上抜け", level_or_val=float(up),
                                      dir="long", entry=entry, exit=exitp,
-                                     ret_pips=(exitp-entry)/pv_local - spread_pips,
+                                     ret_pips=ret*fill_p,
                                      retest_index=ri, retest_hit=rh))
                 if c < dn - break_buffer_arg:
                     entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                     ri, rh = compute_retest(close_s, dn, i, int(retest_wait_k_arg), float(touch_buffer))
+                    ret = (entry-exitp)/pv_local - spread_pips
+                    if cost_fn: ret -= float(cost_fn(t, entry, exitp, 'short'))
+                    fill_p = float(fill_prob_fn(t, 'short', mode="チャネル下抜け", distance=0.0)) if fill_prob_fn else 1.0
                     rows.append(dict(time=t, mode="チャネル下抜け", level_or_val=float(dn),
                                      dir="short", entry=entry, exit=exitp,
-                                     ret_pips=(entry-exitp)/pv_local - spread_pips,
+                                     ret_pips=ret*fill_p,
                                      retest_index=ri, retest_hit=rh))
 
         elif signal_mode == "リテスト指値(水平線)":
@@ -858,9 +964,13 @@ def backtest_rolling(df: pd.DataFrame,
                         if abs(float(df["close"].iloc[j]) - lv) <= touch_buffer:
                             entry = float(df["close"].iloc[j]); exitp = float(df["close"].iloc[j+fwd_n])
                             ri, rh = compute_retest(close_s, lv, i, K, float(touch_buffer))
+                            ret = (exitp-entry)/pv_local - spread_pips
+                            if cost_fn: ret -= float(cost_fn(t_j, entry, exitp, 'long'))
+                            dist = abs(float(entry) - float(lv))
+                            fill_p = float(fill_prob_fn(t_j, 'long', mode="リテスト(L)", distance=dist)) if fill_prob_fn else 1.0
                             rows.append(dict(time=t_j, mode="リテスト(L)", level_or_val=float(lv),
                                              dir="long", entry=entry, exit=exitp,
-                                             ret_pips=(exitp-entry)/pv_local - spread_pips,
+                                             ret_pips=ret*fill_p,
                                              retest_index=ri, retest_hit=rh))
                             break
 
@@ -875,9 +985,13 @@ def backtest_rolling(df: pd.DataFrame,
                         if abs(float(df["close"].iloc[j]) - lv) <= touch_buffer:
                             entry = float(df["close"].iloc[j]); exitp = float(df["close"].iloc[j+fwd_n])
                             ri, rh = compute_retest(close_s, lv, i, K, float(touch_buffer))
+                            ret = (entry-exitp)/pv_local - spread_pips
+                            if cost_fn: ret -= float(cost_fn(t_j, entry, exitp, 'short'))
+                            dist = abs(float(entry) - float(lv))
+                            fill_p = float(fill_prob_fn(t_j, 'short', mode="リテスト(S)", distance=dist)) if fill_prob_fn else 1.0
                             rows.append(dict(time=t_j, mode="リテスト(S)", level_or_val=float(lv),
                                              dir="short", entry=entry, exit=exitp,
-                                             ret_pips=(entry-exitp)/pv_local - spread_pips,
+                                             ret_pips=ret*fill_p,
                                              retest_index=ri, retest_hit=rh))
                             break
 
@@ -974,7 +1088,7 @@ def load_yf(symbol="JPY=X", period="60d", interval="15m"):
 # raw_df の即時ダウンロードは削除（ユーザー設定に基づく取得へ一元化）
 import plotly.graph_objects as go
 from dataclasses import dataclass
-import pytz, joblib
+import joblib
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -1011,13 +1125,13 @@ def show_calibration_report():
         st.image(png, caption="Reliability Curve", use_container_width=True)
 
 
-JST = pytz.timezone("Asia/Tokyo")
+# JST is imported from utils.time_utils at the top
 
 # --- メインタブ構成 ---
 tabs = st.tabs(["トレード", "検証レポート"])
 with tabs[0]:
-    # ...既存のトレードUIコード...
-    pass  # 既存のトレードUIはここに展開されているはず
+    # ここに既存のトレードUIが展開されます
+    st.empty()
 with tabs[1]:
     show_calibration_report()
 
@@ -1265,9 +1379,106 @@ def ensure_jst_index(df: pd.DataFrame) -> pd.DataFrame:
     idx = df.index
     if getattr(idx, "tz", None) is None:
         idx = idx.tz_localize("UTC")
-    return df.copy().set_index(idx.tz_convert(JST))
+    return df.copy().set_index(to_jst(idx))
 
 from utils.ta import atr
+
+# ---- 統一UIメッセージ（色の基準: 赤=error, オレンジ=warning, 青=info） ----
+def ui_error(msg: str):
+    try:
+        st.error(msg)
+    except Exception:
+        print(f"[ERROR] {msg}")
+
+def ui_warn(msg: str):
+    try:
+        st.warning(msg)
+    except Exception:
+        print(f"[WARN] {msg}")
+
+def ui_info(msg: str):
+    try:
+        st.info(msg)
+    except Exception:
+        print(f"[INFO] {msg}")
+
+# ---- 入力検証: 価格DF（Index=DatetimeIndex, JST前提） ----
+def validate_price_df_indexed(
+    df: pd.DataFrame,
+    required_cols: list[str] | None = None,
+    auto_fix_duplicates: bool = False,
+    auto_drop_nan_rows: bool = False,
+) -> tuple[pd.DataFrame, dict]:
+    """価格用の簡易入力検証を行い、必要に応じて自動修正する。
+
+    - 昇順（sort_index）
+    - 重複タイムスタンプ検出（オプションで削除 keep='last'）
+    - 必須列の欠損行検出（オプションで dropna）
+    - 代表的ギャップ検出（大きな間隔のカウントのみ。自動補完はしない）
+
+    戻り値: (df_validated, report)
+      report = {
+        'sorted': bool,
+        'dup_count': int,
+        'dup_fixed': int,
+        'nan_rows': int,
+        'nan_dropped': int,
+        'gap_count': int,
+        'mode_delta_sec': float | nan,
+      }
+    """
+    if df is None or df.empty:
+        return df, {
+            'sorted': True,
+            'dup_count': 0,
+            'dup_fixed': 0,
+            'nan_rows': 0,
+            'nan_dropped': 0,
+            'gap_count': 0,
+            'mode_delta_sec': float('nan'),
+        }
+
+    rep = {'sorted': False, 'dup_count': 0, 'dup_fixed': 0, 'nan_rows': 0, 'nan_dropped': 0, 'gap_count': 0, 'mode_delta_sec': float('nan')}
+    out = df.copy()
+
+    # 昇順化（安定）
+    if not out.index.is_monotonic_increasing:
+        out = out.sort_index()
+        rep['sorted'] = True
+    else:
+        rep['sorted'] = False
+
+    # 重複タイムスタンプ
+    dup_mask = out.index.duplicated(keep='last')
+    dup_cnt = int(dup_mask.sum())
+    rep['dup_count'] = dup_cnt
+    if dup_cnt > 0 and auto_fix_duplicates:
+        before = len(out)
+        out = out[~dup_mask]
+        rep['dup_fixed'] = before - len(out)
+
+    # 必須列の欠損行
+    required_cols = required_cols or [c for c in ['open','high','low','close'] if c in out.columns]
+    nan_rows = int(out[required_cols].isna().any(axis=1).sum()) if required_cols else 0
+    rep['nan_rows'] = nan_rows
+    if nan_rows > 0 and auto_drop_nan_rows and required_cols:
+        before = len(out)
+        out = out.dropna(subset=required_cols)
+        rep['nan_dropped'] = before - len(out)
+
+    # ギャップ検出（代表値から大きく外れる間隔をカウント）
+    try:
+        diffs = out.index.to_series().diff().dropna()
+        if len(diffs):
+            # 最頻間隔（mode）を代表値とする
+            # pandas.Series.mode() は複数返すことがあるため最初を採用
+            mode_delta = diffs.mode().iloc[0]
+            rep['mode_delta_sec'] = float(mode_delta.total_seconds())
+            rep['gap_count'] = int((diffs > mode_delta * 1.5).sum())
+    except Exception:
+        pass
+
+    return out, rep
 
 def in_sessions(ts: pd.Timestamp) -> str:
     h = ts.hour
@@ -1358,6 +1569,12 @@ st.session_state["symbol"] = symbol
 st.session_state["period_raw"] = period_raw
 st.session_state["interval"] = interval
 
+# 入力検証の設定（任意）
+with st.sidebar.expander("入力検証（CSV/価格）", expanded=False):
+    st.session_state['enable_input_validation'] = st.checkbox("入力検証を有効化", value=st.session_state.get('enable_input_validation', True))
+    st.session_state['auto_fix_duplicates'] = st.checkbox("重複タイムスタンプを自動削除", value=st.session_state.get('auto_fix_duplicates', True))
+    st.session_state['auto_drop_nan_rows'] = st.checkbox("必須列の欠損行を自動削除", value=st.session_state.get('auto_drop_nan_rows', True))
+
 # === 推奨行動（意思決定ポリシー）サイドバー ===
 with st.sidebar.expander("🧭 推奨行動（意思決定ポリシー）", expanded=False):
     news_mode = st.selectbox("ニュース時の基本動作", ["hard","soft"], index=0,
@@ -1369,6 +1586,7 @@ with st.sidebar.expander("🧭 推奨行動（意思決定ポリシー）", expa
     bump_low  = st.number_input("θ補正: lowボラ +", value=0.00, step=0.01, format="%.2f")
     bump_mid  = st.number_input("θ補正: midボラ +", value=0.02, step=0.01, format="%.2f")
     bump_high = st.number_input("θ補正: highボラ +", value=0.03, step=0.01, format="%.2f")
+    pattern_w = st.slider("pattern EV 重み (EV/Rに加点)", 0.0, 1.0, float(st.session_state.get('pattern_ev_weight', 0.20)), 0.05)
 
 params = DecisionParams(
     min_ev_r=min_ev_r,
@@ -1378,6 +1596,7 @@ params = DecisionParams(
     spread_max=spread_max,
     wick_ratio_max=wick_ratio_max,
     prefer_limit_retest=prefer_limit,
+    pattern_ev_weight=float(pattern_w),
 )
 
 
@@ -1407,6 +1626,14 @@ compact_weekend = st.sidebar.checkbox(
     "金曜-月曜を詰めて表示（等間隔）",
     value=False,
     help="x軸をカテゴリ扱いにして、週末などの時間ギャップを完全に詰めて表示します（バー間隔は常に等間隔）。"
+)
+# ズーム保持（Plotlyのuirevisionで維持）
+st.session_state.setdefault('preserve_zoom', True)
+st.sidebar.checkbox(
+    "自動更新時にズームを保持",
+    value=st.session_state.get('preserve_zoom', True),
+    help="自動更新しても、直前のズーム・パン・可視トレース状態を維持します。",
+    key="preserve_zoom",
 )
 # --- 🕒 現在時刻（JST, 秒付き） ---
 with st.sidebar.expander("🕒 現在時刻 (JST)", expanded=True):
@@ -1446,6 +1673,47 @@ with st.sidebar.expander("🕒 現在時刻 (JST)", expanded=True):
         # フォールバック: Python側での一回表示（自動更新はページの自動更新設定に依存）
         now = pd.Timestamp.now(tz=JST)
         st.code(now.strftime("%Y-%m-%d %H:%M:%S %Z"), language=None)
+
+# --- ゲート・サマリー（常時表示） ---
+st.sidebar.markdown("---")
+with st.sidebar.expander("🛡️ ゲート・サマリー", expanded=True):
+    gs = st.session_state.get('gate_stats', {})
+    total = gs.get('total', 0)
+    okc = gs.get('trade_ok_count', 0)
+    pr = gs.get('pass_rate', None)
+    st.write(f"直近評価: {okc}/{total} ({pr:.1%})" if isinstance(pr, (int,float)) else f"直近評価: {okc}/{total}")
+    cols = st.columns(3)
+    with cols[0]:
+        en_val = st.toggle(
+            "運用ON",
+            key="enable_trading_mirror",
+            value=st.session_state.get('enable_trading', False),
+            help="メインの運用モードと同期します"
+        )
+        if en_val != st.session_state.get('enable_trading', False):
+            st.session_state['enable_trading'] = en_val
+    with cols[1]:
+        ap_val = st.toggle(
+            "ドリフト停止",
+            key="auto_pause_on_drift_mirror",
+            value=st.session_state.get('auto_pause_on_drift', True),
+            help="ドリフトalert時に自動停止するか（メイン設定と同期）"
+        )
+        if ap_val != st.session_state.get('auto_pause_on_drift', True):
+            st.session_state['auto_pause_on_drift'] = ap_val
+    with cols[2]:
+        nf_val = st.toggle(
+            "ニュース抑制",
+            key="apply_news_filter_mirror",
+            value=st.session_state.get('apply_news_filter', False),
+            help="ニュース窓で発注ブロック（メイン設定と同期）"
+        )
+        if nf_val != st.session_state.get('apply_news_filter', False):
+            st.session_state['apply_news_filter'] = nf_val
+    # スパーク（簡易）
+    hist = st.session_state.get('gate_pass_hist', [])
+    if hist:
+        st.line_chart(pd.Series(hist), height=80)
 st.sidebar.markdown("---")
 st.sidebar.header("2) シグナル条件・ニュース抑制")
 st.sidebar.subheader("シグナル条件")
@@ -2067,6 +2335,78 @@ with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
         except Exception as e:
             st.error(f"簡易評価の実行に失敗: {e}")
 
+    with st.sidebar.expander("🧩 特徴の寄与（直近N本）", expanded=False):
+        enable_shap = st.checkbox("可視化を有効化（処理が重い場合あり）", value=False)
+        last_n = st.slider("本数", 20, 300, 60, 10)
+        sample_k = st.slider("最大サンプル", 50, 500, 200, 50, help="重い場合はサンプリング")
+        if enable_shap:
+            try:
+                model, use_cols, meta = _load_model_and_meta()
+                if model is not None and use_cols:
+                    # 直近の特徴を再生成（df が未定義のタイミングでも動くようにフォールバック）
+                    df_current = globals().get('df', None)
+                    if df_current is None or not isinstance(df_current, pd.DataFrame) or df_current.empty:
+                        import os
+                        csv_path = os.path.join("data", "USDJPY_15m.csv")
+                        if os.path.exists(csv_path):
+                            tmp = pd.read_csv(csv_path)
+                            # 列名の正規化
+                            ren = {}
+                            for c in tmp.columns:
+                                lc = str(c).lower()
+                                if lc in ["timestamp","time","date"]:
+                                    ren[c] = "timestamp"
+                                elif lc in ["open","high","low","close","volume"]:
+                                    ren[c] = lc
+                            tmp = tmp.rename(columns=ren)
+                            if "timestamp" not in tmp.columns:
+                                st.info("CSV に timestamp 列が見当たりません。価格データの取得後に再度お試しください。")
+                                raise RuntimeError("no timestamp column")
+                            tmp["timestamp"] = pd.to_datetime(tmp["timestamp"])  # JST想定
+                            keep = [c for c in ["timestamp","open","high","low","close","volume"] if c in tmp.columns]
+                            df_raw = tmp[keep].copy()
+                        else:
+                            st.info("価格データが未取得です。画面上でデータ取得後にご利用ください。")
+                            raise RuntimeError("no df and no CSV fallback")
+                    else:
+                        # DatetimeIndex を timestamp 列に戻す
+                        idx_name = df_current.index.name or 'index'
+                        df_raw = df_current.reset_index().rename(columns={idx_name:'timestamp'})
+
+                    df_feats = prepare_df_feats_for_inference(df_raw)
+                    # 学習時の列(use_cols)に合わせて不足列は0.0で補完し、順序を合わせる
+                    missing_cols = [c for c in use_cols if c not in df_feats.columns]
+                    if missing_cols:
+                        for c in missing_cols:
+                            df_feats[c] = 0.0
+                    # 数値化（object等をfloatへ）
+                    X_all = df_feats.reindex(columns=use_cols).apply(pd.to_numeric, errors='coerce').fillna(0.0)
+                    X = X_all.tail(last_n)
+                    if len(X) > sample_k:
+                        X = X.sample(sample_k, random_state=42)
+                    from model_wrappers import compute_feature_contributions
+                    contrib = compute_feature_contributions(model, X.values, feature_names=list(X.columns))
+                    if contrib.get("contribs") is None:
+                        st.info("寄与の計算に対応していないか、SHAPが未インストールです。requirementsにshapを追加可能です。")
+                    else:
+                        vals = contrib["contribs"]
+                        fnames = contrib.get("feature_names") or [f"f{i}" for i in range(vals.shape[1])]
+                        import plotly.graph_objects as go
+                        topk = 8
+                        avg_abs = np.nanmean(np.abs(vals), axis=0)
+                        order = np.argsort(-avg_abs)[:topk]
+                        st.caption("上位特徴（|寄与|の平均が大きい順）")
+                        for idx in order:
+                            ser = vals[:, idx]
+                            fig_s = go.Figure(go.Scatter(y=ser, mode="lines", line=dict(width=1)))
+                            fig_s.update_layout(margin=dict(l=0,r=0,t=0,b=0), height=60, xaxis=dict(visible=False), yaxis=dict(visible=False))
+                            st.plotly_chart(fig_s, use_container_width=True)
+                            st.caption(f"{fnames[idx]}")
+                else:
+                    st.info("モデル/使用列が見つかりません。学習済みモデルをご確認ください。")
+            except Exception as e:
+                st.warning(f"寄与の可視化に失敗: {e}")
+
 # --- 簡易バックテスト（グリッド＋Apply Best） ---
 with st.sidebar.expander("🧪 グリッド評価（Apply Best）", expanded=False):
     st.caption("θ とドリフト設定（重み/キャップ/ヒステリシス）を小規模グリッドで試し、最良案を適用")
@@ -2519,7 +2859,7 @@ def load_data(sym: str, period: str, interval: str,
             if not rows:
                 return pd.DataFrame()
             df = pd.DataFrame(rows).set_index("time").sort_index()
-            df.index = df.index.tz_convert(JST)
+            df.index = to_jst(df.index)
             latency_ms = int((time.time() - t0) * 1000)
             log_event('price_fetch_success', source='oanda', symbol=sym, interval=interval, period=period, latency_ms=latency_ms, corr=st.session_state.get('corr_id'))
             _logged_success = True
@@ -2536,7 +2876,6 @@ def load_data(sym: str, period: str, interval: str,
     # fallback: yfinance
     adj_period = clamp_period_for_interval(period, interval)
     # yfinance: リトライ＋ウォッチドッグ（ダウンロードはtimeout未対応のためattempt短縮）
-    df = pd.DataFrame()
     last_exc = None
     for attempt in range(3):
         try:
@@ -2546,9 +2885,6 @@ def load_data(sym: str, period: str, interval: str,
             if df is not None and not df.empty:
                 latency_ms = int((time.time() - t0) * 1000)
                 log_event('price_fetch_success', source='yfinance_history', symbol=sym, interval=interval, period=adj_period, latency_ms=latency_ms, corr=st.session_state.get('corr_id'))
-                _logged_success = True
-                break
-            # フォールバック
             t0 = time.time()
             df = _run_with_timeout(lambda: yf.download(sym, period=adj_period, interval=interval, auto_adjust=False, progress=False), 10.0)
             if df is not None and not df.empty:
@@ -2600,10 +2936,43 @@ with st.spinner("データ取得中..."):
     df, err = safe_call(fetch_prices, symbol, period_raw, interval, oanda_token, oanda_account, oanda_env)
     if err or df is None or df.empty:
         log_event('price_fetch_failed', corr=corr, error=str(err) if err else 'empty')
-        st.error(f"[price] 取得失敗: {err if err else 'データなし'}")
+        ui_error(f"[price] 取得失敗: {err if err else 'データなし'}")
         st.stop()
     # --- ここでJST統一 ---
     df = ensure_jst_index(df)
+
+    # --- 入力検証（一段強化） ---
+    if st.session_state.get('enable_input_validation', True):
+        df_valid, vrep = validate_price_df_indexed(
+            df,
+            required_cols=['open','high','low','close'],
+            auto_fix_duplicates=st.session_state.get('auto_fix_duplicates', True),
+            auto_drop_nan_rows=st.session_state.get('auto_drop_nan_rows', True),
+        )
+        # レポート表示（基準: 赤/オレンジ/青）
+        msgs = []
+        if vrep.get('sorted'):
+            msgs.append("timestampを昇順に並べ替えました")
+        if vrep.get('dup_count', 0) > 0:
+            fixed = vrep.get('dup_fixed', 0)
+            if fixed > 0:
+                ui_warn(f"重複タイムスタンプ {vrep['dup_count']} 行を検出 -> {fixed} 行を削除（最新を採用）")
+            else:
+                ui_warn(f"重複タイムスタンプを {vrep['dup_count']} 行検出（自動修正OFF）")
+        if vrep.get('nan_rows', 0) > 0:
+            dropped = vrep.get('nan_dropped', 0)
+            if dropped > 0:
+                ui_warn(f"必須列の欠損行 {vrep['nan_rows']} 行 -> {dropped} 行を削除")
+            else:
+                ui_warn(f"必須列の欠損行を {vrep['nan_rows']} 行検出（自動修正OFF）")
+        if vrep.get('gap_count', 0) > 0:
+            md = vrep.get('mode_delta_sec', float('nan'))
+            # gap は情報提供レベル（青）
+            ui_info(f"代表間隔≒{md:.0f}s に対して大きなギャップ {vrep['gap_count']} 箇所を検出（営業日/休場による場合あり）")
+        if not (vrep.get('dup_count') or vrep.get('nan_rows') or vrep.get('gap_count') or vrep.get('sorted')):
+            ui_info("入力検証OK（重複/欠損/顕著なギャップなし）")
+
+        df = df_valid
 
 # --- ドリフトメタの更新（価格取得後・確率バッファ更新の前後どちらでも可）---
 st.session_state.setdefault('prob_buffer', [])
@@ -3690,7 +4059,6 @@ def detect_flag_pennant(df, lookback=220, Npush=30, min_flag_bars=8, max_flag_ba
     if len(pole) < 5 or len(cons) < min_flag_bars: return []
 
     pole_len = float(pole["close"].iloc[-1] - pole["close"].iloc[0])
-    from flag_pennant_detector import detect_flag_pennant
     pole_dir = "up" if pole_len > 0 else "down"
     pole_abs = abs(pole_len)
 
@@ -4205,7 +4573,8 @@ def measured_targets(p: Pattern):
     """パターン別ターゲット（測定値）"""
     kind = p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None)
     params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
-    if kind and kind.startswith("triangle"):
+    # Triangle 系（sym/ascending/descending）
+    if kind in ("triangle_sym","triangle_ascending","triangle_descending") or (kind and kind.startswith("triangle")):
         t = float(params.get("thickness", 0.0))
         return dict(up=+t, down=-t)
     if kind=="rectangle":
@@ -4301,10 +4670,9 @@ pattern_auto_zoom_latest = st.sidebar.checkbox("最新へオートズーム", va
 patterns = []
 try:
     double_patterns = []
-    tri_df = None
-    rect_df = None
+    # Triangle: 直接検出 -> Pattern化
     if enable_tri:
-        tri_df = detect_triangles_df(
+        tri_pats = detect_triangles(
             df,
             high_col="high", low_col="low", close_col="close",
             atr_window=14,
@@ -4317,10 +4685,35 @@ try:
             pretrend_win=24,
             require_breakout=False,
         )
-        tri_df = tri_df[tri_df["quality_score"] >= 0.55].reset_index(drop=True)
-        tri_df = tri_df.replace({None: np.nan})
+        tri_pats = [p for p in tri_pats if float(p.get("quality_score", 0.0)) >= 0.55]
+        tri_top = sorted(tri_pats, key=lambda x: x.get("quality_score", 0.0), reverse=True)[:10]
+        for r in tri_top:
+            s = int(r.get("start_idx")); e = int(r.get("end_idx"))
+            tri_type = str(r.get("type", "sym_triangle"))
+            if tri_type == "ascending_triangle":
+                kind = "triangle_ascending"
+            elif tri_type == "descending_triangle":
+                kind = "triangle_descending"
+            else:
+                kind = "triangle_sym"
+            params = dict(
+                upper_line=tuple(r.get("upper_line", (0.0,0.0,0.0))),
+                lower_line=tuple(r.get("lower_line", (0.0,0.0,0.0))),
+                thickness=float(r.get("width_start", 0.0)),
+                entry=float(r.get("entry", np.nan)),
+                stop=float(r.get("stop", np.nan)),
+                target=float(r.get("target", np.nan)),
+            )
+            patterns.append(Pattern(
+                kind=kind,
+                t_start=df.index[s], t_end=df.index[e],
+                params=params,
+                quality=float(r.get("quality_score", 0.0)),
+                direction_bias=("up" if str(r.get("dir","bull")).lower()=="bull" else "down"),
+            ))
+    # Rectangle: 直接検出 -> Pattern化
     if enable_rect:
-        rect_df = detect_rectangles_df(
+        rect_pats = detect_rectangles(
             df,
             high_col="high", low_col="low", close_col="close",
             atr_window=14,
@@ -4333,31 +4726,57 @@ try:
             width_max_atr=3.5,
             width_stability_max=0.28,
         )
-        rect_df = rect_df[rect_df["quality_score"] >= 0.55].reset_index(drop=True)
-        rect_df = rect_df.replace({None: np.nan})
-
-        tol_atrK=0.55,
-        min_sep_bars=10,
-        min_depth_atr=0.90,
-        confirm_bars=2,
-        neck_break_atr=0.15,
-        retest_within=30,
-        retest_tol_atr=0.25,
-        pretrend_win=24,
-        pretrend_min=0.0,
-    # ...existing code...
+        rect_pats = [p for p in rect_pats if float(p.get("quality_score", 0.0)) >= 0.55]
+        rect_top = sorted(rect_pats, key=lambda x: x.get("quality_score", 0.0), reverse=True)[:10]
+        for r in rect_top:
+            s = int(r.get("start_idx")); e = int(r.get("end_idx"))
+            uh_s, uh_b, _ = r.get("upper_line", (0.0,0.0,0.0))
+            lh_s, lh_b, _ = r.get("lower_line", (0.0,0.0,0.0))
+            up_y_s = uh_s * s + uh_b
+            lo_y_s = lh_s * s + lh_b
+            height = float(abs(up_y_s - lo_y_s))
+            params = dict(
+                upper=float(up_y_s), lower=float(lo_y_s), height=height,
+                entry=float(r.get("entry", np.nan)),
+                stop=float(r.get("stop", np.nan)),
+                target=float(r.get("target", np.nan)),
+                sub_start=df.index[s], sub_end=df.index[e],
+            )
+            patterns.append(Pattern(
+                kind="rectangle",
+                t_start=df.index[s], t_end=df.index[e],
+                params=params,
+                quality=float(r.get("quality_score", 0.0)),
+                direction_bias=("up" if str(r.get("dir","bull")).lower()=="bull" else "down"),
+            ))
+    # ダブルトップ/ダブルボトム
+    if enable_double:
+        tol_mode_val = (dbl_tol_mode or "atr").lower()
+        tol_mode_par = "atr" if "atr" in tol_mode_val else "pct"
+        double_patterns = detect_double_top_bottom(
+            df, pivot_high, pivot_low,
+            lookback=int(double_lookback),
+            tol_mode=tol_mode_par,
+            tol_pct=float(dbl_tol_pct),
+            tol_atrK=float(dbl_tol_atrK),
+            min_sep_bars=int(dbl_min_sep),
+            min_depth_atr=float(dbl_min_depth_atr),
+            confirm_bars=2 if bool(dbl_require_confirm) else 1,
+        )
     patterns += [max(double_patterns, key=lambda p: p.t_end)] if (show_only_latest_double and double_patterns) else double_patterns
 
 
     if enable_flag:
-        patterns_df = detect_flag_pennant(df)
-        import pandas as pd
-        if not isinstance(patterns_df, pd.DataFrame):
-            try:
-                patterns_df = pd.DataFrame(patterns_df)
-            except Exception:
-                patterns_df = pd.DataFrame()
-        patterns += patterns_df.to_dict('records')
+        # 内部版は Pattern を返すので、そのまま patterns に追加する
+        patterns += detect_flag_pennant(
+            df,
+            lookback=int(flag_lookback),
+            Npush=int(flag_Npush),
+            min_flag_bars=int(flag_min_bars),
+            max_flag_bars=int(flag_max_bars),
+            sigma_k=float(flag_sigma_k),
+            pole_min_atr=float(flag_pole_min_atr),
+        )
     if enable_hs:
         patterns += detect_head_shoulders(df, pivot_high, pivot_low, lookback=hs_lookback, tol=hs_tol)
     if enable_asia:
@@ -4380,84 +4799,68 @@ except Exception as e:
     st.error(f"パターン検出中にエラー: {e}")
     patterns = []
 
-# ---- すべてのチャートパターン表を結合して表示 ----
-import pandas as pd
-pattern_tables = []
-if 'rect_df' in locals() and rect_df is not None and not rect_df.empty:
-    pattern_tables.append(rect_df)
-if 'tri_df' in locals() and tri_df is not None and not tri_df.empty:
-    pattern_tables.append(tri_df)
-if 'double_patterns' in locals() and double_patterns:
-    double_df = pd.DataFrame(double_patterns)
-    if not double_df.empty:
-        pattern_tables.append(double_df)
-
-# フラッグ/ペナント
-
-
-
 import re
 import pandas as pd
 
-# ---- すべてのチャートパターン表を結合して表示 ----
-pattern_tables = []
-if 'rect_df' in locals() and rect_df is not None and not rect_df.empty:
-    pattern_tables.append(rect_df)
-if 'tri_df' in locals() and tri_df is not None and not tri_df.empty:
-    pattern_tables.append(tri_df)
-if 'double_patterns' in locals() and double_patterns:
-    double_df = pd.DataFrame(double_patterns)
-    if not double_df.empty:
-        pattern_tables.append(double_df)
+def _pattern_kind_label(kind: str) -> str:
+    """英語の種別名をUI表示用の日本語に変換"""
+    if not kind:
+        return ""
+    m = {
+        "triangle_sym": "対称三角形",
+        "triangle_ascending": "上昇三角形",
+        "triangle_descending": "下降三角形",
+        "rectangle": "ボックス（レンジ）",
+        "double_top": "ダブルトップ",
+        "double_bottom": "ダブルボトム",
+        "flag_up": "フラッグ（上向き）",
+        "flag_dn": "フラッグ（下向き）",
+        "pennant": "ペナント",
+        "head_shoulders": "ヘッド＆ショルダー",
+        "inverse_head_shoulders": "逆ヘッド＆ショルダー",
+    }
+    if str(kind).startswith("asia_box"):
+        return "東京時間ボックス"
+    return m.get(str(kind), str(kind))
 
-# patternsリスト（ヘッド＆ショルダーズ、フラッグ/ペナント等）も表に追加
-if patterns:
-    patterns_dicts = []
-    for p in patterns:
-        if isinstance(p, re.Pattern):
-            d = {"pattern": p.pattern, "flags": p.flags}
-        elif hasattr(p, "keys"):
-            d = dict(p)
-        elif hasattr(p, "__dict__"):
-            d = vars(p)
+# ---- Pattern ベースの一覧表示（日本語ラベル） ----
+try:
+    if patterns:
+        rows = []
+        for p in patterns:
+            kind = p.get('kind') if hasattr(p, 'get') else getattr(p, 'kind', None)
+            t0 = p.get('t_start') if hasattr(p, 'get') else getattr(p, 't_start', None)
+            t1 = p.get('t_end') if hasattr(p, 'get') else getattr(p, 't_end', None)
+            q  = p.get('quality') if hasattr(p, 'get') else getattr(p, 'quality', None)
+            dr = p.get('direction_bias') if hasattr(p, 'get') else getattr(p, 'direction_bias', None)
+            dr_jp = "上" if str(dr).lower()=="up" else ("下" if str(dr).lower()=="down" else str(dr))
+            rows.append({
+                "パターン": _pattern_kind_label(kind),
+                "開始": t0,
+                "終了": t1,
+                "品質": (round(float(q), 3) if isinstance(q, (int,float)) and np.isfinite(q) else None),
+                "方向": dr_jp,
+            })
+        tbl = pd.DataFrame(rows)
+        if not tbl.empty:
+            tbl = tbl.sort_values(by=["品質"], ascending=False)
+            st.subheader("検出パターン一覧")
+            st.dataframe(tbl, use_container_width=True)
         else:
-            d = {"value": str(p)}
-        mt = measured_targets(p)
-        d['dn'] = mt.get('down', 0.0)
-        patterns_dicts.append(d)
-    patterns_df = pd.DataFrame(patterns_dicts)
-    if not patterns_df.empty:
-        pattern_tables.append(patterns_df)
+            st.info("検出されたパターンはありませんでした")
+    else:
+        st.info("検出されたパターンはありませんでした")
+except Exception as e:
+    st.warning(f"パターン表の生成で問題が発生: {e}")
 
-if pattern_tables:
-    all_patterns_df = pd.concat(pattern_tables, ignore_index=True, sort=False)
-    st.dataframe(all_patterns_df.style.format({
-        "width_mean":"{:.3f}", "width_std":"{:.3f}", "width_stability":"{:.2f}",
-        "quality_score":"{:.2f}", "quality":"{:.2f}",
-        "entry":"{:.3f}", "stop":"{:.3f}", "target":"{:.3f}",
-        "dn":"{:.3f}",
-    }, na_rep="-"))
-
-# ---- すべてのチャートパターン表を結合して表示 ----
-import pandas as pd
-pattern_tables = []
-if 'rect_df' in locals() and rect_df is not None and not rect_df.empty:
-    pattern_tables.append(rect_df)
-if 'tri_df' in locals() and tri_df is not None and not tri_df.empty:
-    pattern_tables.append(tri_df)
-if 'double_patterns' in locals() and double_patterns:
-    double_df = pd.DataFrame(double_patterns)
-    if not double_df.empty:
-        pattern_tables.append(double_df)
-
-if pattern_tables:
-    all_patterns_df = pd.concat(pattern_tables, ignore_index=True, sort=False)
-    st.dataframe(all_patterns_df.style.format({
-        "width_mean":"{:.3f}", "width_std":"{:.3f}", "width_stability":"{:.2f}",
-        "quality_score":"{:.2f}",
-        "entry":"{:.3f}", "stop":"{:.3f}", "target":"{:.3f}",
-    }, na_rep="-"))
-
+# ---- パターン由来の期待R（代表値）を保存 ----
+try:
+    from policy.pattern_ev import pattern_list_expected_R, pattern_expected_R_for_dir
+    st.session_state['pattern_ev_r'] = pattern_list_expected_R(patterns)
+    st.session_state['pattern_ev_up'] = pattern_expected_R_for_dir(patterns, 'up')
+    st.session_state['pattern_ev_down'] = pattern_expected_R_for_dir(patterns, 'down')
+except Exception:
+    st.session_state['pattern_ev_r'] = None
 # ---------------- モデル読み込み（TTL付きキャッシュ） ----------------
 @st.cache_resource(show_spinner=False, ttl=600)
 def _load_break_model_cached(path: str):
@@ -4719,47 +5122,31 @@ def _safe_sub_df(df: pd.DataFrame, start, end) -> pd.DataFrame:
     take = max(3, int(n * 0.10))
     return df.tail(take)
 
-def _line_points(i1, i2, slope, intercept):
-    xs = np.array([i1, i2], dtype=float)
-    ys = slope * xs + intercept
-    return xs.astype(int), ys
-
-if 'tri_df' in locals() and tri_df is not None and not tri_df.empty:
-    tri_df_sorted = tri_df.sort_values("quality_score", ascending=False).head(10)
-    for _, r in tri_df_sorted.iterrows():
-        s, e = int(r["start_idx"]), int(r["end_idx"])
-        xs_u, ys_u = _line_points(s, e, r["upper_slope"], r["upper_intercept"])
-        xs_l, ys_l = _line_points(s, e, r["lower_slope"], r["lower_intercept"])
-        x_u = df.index[xs_u] if "time" not in df.columns else df["time"].iloc[xs_u]
-        x_l = df.index[xs_l] if "time" not in df.columns else df["time"].iloc[xs_l]
-        fig.add_scatter(x=x_u, y=ys_u, mode="lines", name=f"{r['type']} upper (q={r['quality_score']:.2f})", opacity=0.7)
-        fig.add_scatter(x=x_l, y=ys_l, mode="lines", name=f"{r['type']} lower", opacity=0.7)
-        fig.add_hline(y=r["entry"],  line_dash="dot", annotation_text="entry")
-        fig.add_hline(y=r["stop"],   line_dash="dot", annotation_text="stop")
-        fig.add_hline(y=r["target"], line_dash="dot", annotation_text="target")
-
-if 'rect_df' in locals():
-    def _line_points(i1, i2, slope, intercept):
-        xs = np.array([i1, i2], dtype=float)
-        ys = slope * xs + intercept
-        return xs.astype(int), ys
-
-    if rect_df is not None:
-        rect_df_sorted = rect_df.sort_values("quality_score", ascending=False).head(10)
-        for _, r in rect_df_sorted.iterrows():
-            s, e = int(r["start_idx"]), int(r["end_idx"])
-            xs_u, ys_u = _line_points(s, e, r["upper_slope"], r["upper_intercept"])
-            xs_l, ys_l = _line_points(s, e, r["lower_slope"], r["lower_intercept"])
-
-            x_u = df.index[xs_u] if "time" not in df.columns else df["time"].iloc[xs_u]
-            x_l = df.index[xs_l] if "time" not in df.columns else df["time"].iloc[xs_l]
-
-            fig.add_scatter(x=x_u, y=ys_u, mode="lines", name=f"rect upper (q={r['quality_score']:.2f})", opacity=0.7)
-            fig.add_scatter(x=x_l, y=ys_l, mode="lines", name="rect lower", opacity=0.7)
-
-            fig.add_hline(y=r["entry"],  line_dash="dot", annotation_text="entry")
-            fig.add_hline(y=r["stop"],   line_dash="dot", annotation_text="stop")
-            fig.add_hline(y=r["target"], line_dash="dot", annotation_text="target")
+def _draw_triangle(fig, p: Pattern):
+    # 上下回帰線（upper_line/lower_line）と t_start～t_end を用いて描画
+    try:
+        params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
+        ul = params.get('upper_line')
+        ll = params.get('lower_line')
+        t0 = p.get('t_start') if isinstance(p, dict) else getattr(p, 't_start', None)
+        t1 = p.get('t_end') if isinstance(p, dict) else getattr(p, 't_end', None)
+        if not (ul and ll and t0 is not None and t1 is not None):
+            return
+        s_idx = df.index.get_loc(t0)
+        e_idx = df.index.get_loc(t1)
+        xs = np.arange(s_idx, e_idx+1, dtype=float)
+        y_u = ul[0] * xs + ul[1]
+        y_l = ll[0] * xs + ll[1]
+        x_axis = df.index[s_idx:e_idx+1]
+        fig.add_scatter(x=x_axis, y=y_u, mode="lines", name="triangle upper", line=dict(color=COLOR_TRIANGLE, width=2), opacity=0.8)
+        fig.add_scatter(x=x_axis, y=y_l, mode="lines", name="triangle lower", line=dict(color=COLOR_TRIANGLE, width=2), opacity=0.8)
+        # 補助線（entry/stop/target）があれば
+        for key, label in (("entry","entry"),("stop","stop"),("target","target")):
+            val = params.get(key)
+            if val is not None and np.isfinite(val):
+                fig.add_hline(y=float(val), line_dash="dot", annotation_text=label)
+    except Exception:
+        pass
 
 def _draw_rectangle(fig, p: Pattern):
     params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
@@ -4901,8 +5288,10 @@ def _draw_hs(fig, p: Pattern):
 patterns_sorted = sorted(patterns, key=lambda p: getattr(p, 'quality', 0), reverse=True)[:10]
 for p in patterns_sorted:
     kind = p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None)
-    # トライアングルはtri_dfで描画済みなのでここでは描画しない
-    if kind=="rectangle":
+    # パターン種別ごとに描画
+    if kind and str(kind).startswith("triangle"):
+        _draw_triangle(fig, p)
+    elif kind=="rectangle":
         _draw_rectangle(fig, p)
     elif kind in ("double_top","double_bottom"):
         _draw_double(fig, p)
@@ -4934,22 +5323,36 @@ try:
     if pattern_highlight_latest and patterns:
         t0, t1, kind = _latest_pattern_window(patterns)
         if t0 is not None and t1 is not None:
+            # 種別の日本語ラベルで注釈
+            try:
+                kind_label = _pattern_kind_label(kind) if 'kind' in locals() or 'kind' in globals() else str(kind)
+            except Exception:
+                kind_label = str(kind)
             fig.add_vrect(x0=t0, x1=t1, line_width=0, fillcolor="rgba(255, 235, 59, 0.15)",
-                          annotation_text=f"latest {kind}", annotation_position="top left")
+                          annotation_text=f"最新: {kind_label}", annotation_position="top left")
             try:
                 log_event('pattern_vrect', kind=str(kind), t_start=str(t0), t_end=str(t1))
             except Exception:
                 pass
             # オートズーム（カテゴリ軸では適用しない）
+            # ユーザーのズームは維持する: デフォルトで preserve_zoom=True のため、
+            # 自動ズームはパターンが変わった時に一度だけ適用する。
             if pattern_auto_zoom_latest and not compact_weekend:
                 try:
-                    w = (t1 - t0)
-                    pad = pd.Timedelta(minutes=30) if not isinstance(w, pd.Timedelta) or w <= pd.Timedelta(0) else max(pd.Timedelta(minutes=10), w * 0.30)
-                    fig.update_xaxes(range=[t0 - pad, t1 + pad])
-                    try:
-                        log_event('pattern_auto_zoom', kind=str(kind), t_start=str(t0), t_end=str(t1), pad=str(pad))
-                    except Exception:
+                    if st.session_state.get('preserve_zoom', True):
+                        # ズーム維持が有効な場合は自動ズームを行わない
                         pass
+                    else:
+                        pat_id = f"{kind}|{pd.to_datetime(t0)}|{pd.to_datetime(t1)}"
+                        if st.session_state.get('autozoom_latest_id') != pat_id:
+                            w = (t1 - t0)
+                            pad = pd.Timedelta(minutes=30) if not isinstance(w, pd.Timedelta) or w <= pd.Timedelta(0) else max(pd.Timedelta(minutes=10), w * 0.30)
+                            fig.update_xaxes(range=[t0 - pad, t1 + pad])
+                            st.session_state['autozoom_latest_id'] = pat_id
+                            try:
+                                log_event('pattern_auto_zoom', kind=str(kind), t_start=str(t0), t_end=str(t1), pad=str(pad))
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 except Exception:
@@ -4975,11 +5378,17 @@ def _pattern_levels_for_prob(df, p: Pattern):
     kind = p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None)
     params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
     if kind and kind.startswith("triangle"):
-        subp = df.loc[params["sub_start"]:params["sub_end"]]
-        m1,b1 = params["upper"]; m2,b2 = params["lower"]
-        x_now  = len(subp)-1
-        y_u = float(m1*x_now + b1); y_l = float(m2*x_now + b2)
-        upper_level, lower_level = y_u, y_l
+        # t_end の位置で上辺/下辺の現在値を評価
+        ul = params.get("upper_line"); ll = params.get("lower_line")
+        t1 = p.get('t_end') if isinstance(p, dict) else getattr(p, 't_end', None)
+        if ul and ll and t1 is not None:
+            try:
+                idx = df.index.get_indexer([t1], method='nearest')[0]
+                m1,b1,_ = ul; m2,b2,_ = ll
+                y_u = float(m1*idx + b1); y_l = float(m2*idx + b2)
+                upper_level, lower_level = y_u, y_l
+            except Exception:
+                upper_level = lower_level = None
     elif kind=="rectangle":
         upper_level, lower_level = float(params["upper"]), float(params["lower"])
     elif kind=="double_top":
@@ -5201,11 +5610,72 @@ else:
                      rangebreaks=rb)
 fig.update_yaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID)
 
-# ★ ここでズーム保持を追加
+# ★ ここでズーム保持を追加（Plotly uirevision + 最終レンジの保存/復元）
 fig.update_layout(uirevision="fx-live")
 
-# 描画
-st.plotly_chart(fig, use_container_width=True)
+# 直前のユーザーズームを復元（x軸中心）
+try:
+    if st.session_state.get('preserve_zoom', True):
+        xr = st.session_state.get('xrange')
+        if isinstance(xr, (list, tuple)) and len(xr) == 2 and all(xr):
+            fig.update_xaxes(range=xr)
+        # Y軸のズームも復元（オプション）
+        yr = st.session_state.get('yrange')
+        if isinstance(yr, (list, tuple)) and len(yr) == 2 and all(v is not None for v in yr):
+            fig.update_yaxes(range=yr)
+except Exception:
+    pass
+
+# 描画（可能なら relayout イベントを拾って次回に活かす）
+_rendered = False
+try:
+    from streamlit_plotly_events import plotly_events  # type: ignore
+    # plotly_events で描画し、ユーザーのズーム・パン操作を検知
+    evs = plotly_events(
+        fig,
+        events=["relayout"],
+        key="main_chart",  # フォールバック時と同一キーに統一
+        override_width="100%",
+    )
+    _rendered = True
+    # 直近の relayout から x軸レンジを保存
+    try:
+        if isinstance(evs, list) and evs:
+            e = evs[-1]
+            # 1) bracket形式
+            x0 = e.get('xaxis.range[0]')
+            x1 = e.get('xaxis.range[1]')
+            # 2) list形式（xaxis.range）
+            if (x0 is None or x1 is None):
+                rng = e.get('xaxis.range')
+                if isinstance(rng, (list, tuple)) and len(rng) == 2:
+                    x0, x1 = rng[0], rng[1]
+            auto = e.get('xaxis.autorange')
+            # preserve_zoom中はデータ更新等による autorange True を無視（保存レンジを消さない）
+            if auto is True and st.session_state.get('preserve_zoom', True):
+                pass
+            elif x0 is not None and x1 is not None:
+                st.session_state['xrange'] = [x0, x1]
+
+            # Y軸のレンジ保存（同様に autroange True は無視）
+            y0 = e.get('yaxis.range[0]')
+            y1 = e.get('yaxis.range[1]')
+            if (y0 is None or y1 is None):
+                yrng = e.get('yaxis.range')
+                if isinstance(yrng, (list, tuple)) and len(yrng) == 2:
+                    y0, y1 = yrng[0], yrng[1]
+            yauto = e.get('yaxis.autorange')
+            if not (yauto is True and st.session_state.get('preserve_zoom', True)):
+                if y0 is not None and y1 is not None:
+                    st.session_state['yrange'] = [y0, y1]
+    except Exception:
+        pass
+except Exception:
+    _rendered = False
+
+if not _rendered:
+    # フォールバック描画（イベント取得不可）
+    st.plotly_chart(fig, use_container_width=True, key="main_chart")
 st.caption(f"最終更新: {pd.Timestamp.now(tz=JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
 # ---------------- 近傍ニュース判定（モード別） ----------------
@@ -5399,6 +5869,50 @@ def backtest(df: pd.DataFrame, levels: list, fwd_n: int, break_buffer_arg: float
 bt_df = None
 if run_bt:
     with st.spinner("バックテスト実行中..."):
+        def _cost_fn(ts, entry, exitp, side):
+            # 現実的な簡易モデル: セッション別ベース + ニュースバンプ
+            extra = 0.0
+            # セッション基礎コスト
+            try:
+                h = int(getattr(ts, 'hour', 12))
+                if 9 <= h < 15:      # Tokyo
+                    extra += 0.01
+                elif 16 <= h < 24:   # London
+                    extra += 0.02
+                elif h >= 22 or h < 5:  # NY
+                    extra += 0.02
+                else:
+                    extra += 0.01
+            except Exception:
+                extra += 0.01
+            try:
+                win = pd.Timedelta(minutes=int(st.session_state.get('news_win', 30)))
+                wdf = st.session_state.get('windows_df')
+                if wdf is not None and not wdf.empty:
+                    near = ((wdf['start'] - win) <= ts) & (ts <= (wdf['end'] + win))
+                    if bool(near.any()):
+                        extra += 0.05
+            except Exception:
+                pass
+            return extra
+        def _fill_prob(ts, side, *, distance: float | None = None, mode: str | None = None):
+            # ニュース時は充足率を下げる + 指値なら距離に応じてロジスティック減衰
+            try:
+                wdf = st.session_state.get('windows_df')
+                if wdf is not None and not wdf.empty:
+                    near = (wdf['start'] <= ts) & (ts <= wdf['end'])
+                    if bool(near.any()):
+                        return 0.9
+            except Exception:
+                pass
+            # 距離依存（指値想定）: 近いほど高く、遠いほど低く
+            if mode and 'リテスト' in mode and distance is not None:
+                # sigma=0.05（価格単位）のロジスティック近似
+                import math as _m
+                d = max(0.0, float(distance))
+                p = 1.0 / (1.0 + _m.exp((d - 0.05) / 0.02))
+                return max(0.5, min(1.0, p))
+            return 1.0
         bt_df = backtest_rolling(
             df=df,
             fwd_n=fwd_n,
@@ -5409,7 +5923,9 @@ if run_bt:
             apply_news=apply_news_filter,
             signal_mode=signal_mode,
             retest_wait_k_arg=retest_wait_k,
-            touch_buffer=touch_buffer
+            touch_buffer=touch_buffer,
+            cost_fn=_cost_fn,
+            fill_prob_fn=_fill_prob
         )
     if bt_df is None or bt_df.empty:
         st.warning("トレードが生成されませんでした。パラメータ/モードを見直してください。")
@@ -5609,7 +6125,9 @@ def compute_expected_pips_table_for_levels(df, levels, fwd_n, break_buffer, spre
             apply_news=apply_news_filter,
             signal_mode="水平線ブレイク(終値)",
             retest_wait_k_arg=retest_wait_k,
-            touch_buffer=touch_buffer
+            touch_buffer=touch_buffer,
+            cost_fn=(lambda *args, **kwargs: 0.0),
+            fill_prob_fn=(lambda *args, **kwargs: 1.0)
         )
         if bt is None or bt.empty:
             st.session_state[cache_key] = (params_sig, min_start-1, bar_len, {})
@@ -5779,12 +6297,11 @@ if show_break_prob:
         st.info("学習モデル（models/break_model.joblib）が見つかりません。先に ai_train_break.py を実行してください。")
     else:
             ts_now = df.index[-1]
-            # 重要度スコアで一位の水平線のみ表示
+            # 重要度スコアがあれば全候補の水平線を、無ければ抽出済みの全レベルを対象にする（上位1件制限を撤廃）
             if score_df is not None and not score_df.empty:
-                top_level = float(score_df.sort_values("score", ascending=False)["level"].iloc[0])
-                use_levels = [top_level]
+                use_levels = list(score_df.sort_values("score", ascending=False)["level"].astype(float))
             else:
-                use_levels = [levels[0]] if levels else []
+                use_levels = list(levels) if levels else []
             try:
                 # 水平線ブレイク確率テーブルの計算
                 from build_level_break_prob_table import build_level_break_prob_table_cached
@@ -6436,11 +6953,16 @@ else:
         kind = p.get('kind') if isinstance(p, dict) else getattr(p, 'kind', None)
         params = p['params'] if isinstance(p, dict) else getattr(p, 'params', {})
         if kind and kind.startswith("triangle"):
-            subp = df.loc[params["sub_start"]:params["sub_end"]]
-            m1,b1 = params["upper"]; m2,b2 = params["lower"]
-            x_now  = len(subp)-1
-            y_u = float(m1*x_now + b1); y_l = float(m2*x_now + b2)
-            upper_level, lower_level = y_u, y_l
+            ul = params.get("upper_line"); ll = params.get("lower_line")
+            t1 = p.get('t_end') if isinstance(p, dict) else getattr(p, 't_end', None)
+            if ul and ll and t1 is not None:
+                try:
+                    idx = df.index.get_indexer([t1], method='nearest')[0]
+                    m1,b1,_ = ul; m2,b2,_ = ll
+                    y_u = float(m1*idx + b1); y_l = float(m2*idx + b2)
+                    upper_level, lower_level = y_u, y_l
+                except Exception:
+                    upper_level = lower_level = None
         elif kind=="rectangle":
             upper_level, lower_level = float(params["upper"]), float(params["lower"])
         elif kind=="double_top":
@@ -6532,6 +7054,11 @@ else:
 
     out = pd.DataFrame(rows)
     if not out.empty:
+        # 日本語ラベル列を追加
+        try:
+            out["pattern_jp"] = out["pattern"].apply(_pattern_kind_label)
+        except Exception:
+            out["pattern_jp"] = out["pattern"].astype(str)
         out["best_action"] = out.apply(lambda r: "BUY" if (pd.notna(r["EV_up"]) and (r["EV_up"]>= (r["EV_dn"] if pd.notna(r["EV_dn"]) else -1e9))) else "SELL", axis=1)
         out["best_EV"] = out.apply(lambda r: r["EV_up"] if r["best_action"]=="BUY" else r["EV_dn"], axis=1)
         # 数値カラムのみ型変換してフォーマット、str型には適用しない
@@ -6540,7 +7067,7 @@ else:
             if col in out.columns:
                 out[col] = pd.to_numeric(out[col], errors="coerce")
         st.dataframe(
-            out[["pattern","quality","upper_level","lower_level","P_up","P_dn",
+            out[["pattern_jp","quality","upper_level","lower_level","P_up","P_dn",
                  "E_pips_up","E_pips_dn","EV_up","EV_dn","best_action","best_EV",
                  "target_up","target_dn"]]
             .style.format({

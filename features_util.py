@@ -58,10 +58,50 @@ def augment_features(feats: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
     df["z_close_20"] = _zscore(df["close"], 20)
 
     hc = _hour_sin_cos(df["timestamp"])
+    # --- 上位足近似（1h/4h）---
+    try:
+        ts = pd.to_datetime(df["timestamp"])  # tz-aware/naiveどちらでもOK
+        if len(ts) >= 3:
+            deltas = ts.diff().dropna().dt.total_seconds().values
+            step = float(np.median(deltas)) if len(deltas) else 900.0
+            per_h = max(1, int(round(3600.0 / max(step, 1.0))))
+        else:
+            per_h = 4  # 15m相当のフォールバック
+    except Exception:
+        per_h = 4
+    w1 = int(per_h)
+    w4 = int(per_h * 4)
+    def _roll_slope_norm(s: pd.Series, w: int) -> pd.Series:
+        if w <= 1: return pd.Series([0.0]*len(s))
+        idx = np.arange(w, dtype=float)
+        def _sl(arr):
+            y = np.asarray(arr, dtype=float)
+            xm, ym = idx.mean(), y.mean()
+            den = ((idx-xm)**2).sum()
+            if den <= 1e-9: return 0.0
+            return float(((idx-xm)*(y-ym)).sum()/den)
+        sl = s.rolling(w).apply(_sl, raw=True)
+        return _safe_div(sl, s.abs())
+    # 1h, 4h 変化率とトレンド、ATRの相対量
+    df["mtf1h_ret"]  = df["close"].pct_change(w1) if w1 < len(df) else 0.0
+    df["mtf4h_ret"]  = df["close"].pct_change(w4) if w4 < len(df) else 0.0
+    df["mtf1h_slope"] = _roll_slope_norm(df["close"], w1)
+    df["mtf4h_slope"] = _roll_slope_norm(df["close"], w4)
+    atr1h = _atr(df, max(2, w1))
+    atr4h = _atr(df, max(4, w4))
+    df["mtf1h_atr_norm"] = _safe_div(atr1h, df["close"].abs())
+    df["mtf4h_atr_norm"] = _safe_div(atr4h, df["close"].abs())
+    # one-hot風の方向フラグ
+    df["mtf1h_up"] = (df["mtf1h_slope"] > 0).astype(float)
+    df["mtf4h_up"] = (df["mtf4h_slope"] > 0).astype(float)
     add = pd.concat([
         df[["timestamp","ret_8","ret_12","atr14_norm","atr_ratio","d_atr14",
             "range_pct","body_ratio","wick_up_ratio","wick_dn_ratio",
-            "slope_short_6","z_close_20"]].reset_index(drop=True),
+            "slope_short_6","z_close_20",
+            # MTF features
+            "mtf1h_ret","mtf4h_ret","mtf1h_slope","mtf4h_slope",
+            "mtf1h_atr_norm","mtf4h_atr_norm","mtf1h_up","mtf4h_up"
+            ]].reset_index(drop=True),
         hc.reset_index(drop=True)
     ], axis=1)
 

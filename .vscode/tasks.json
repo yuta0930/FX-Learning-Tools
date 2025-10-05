@@ -17,6 +17,15 @@
 				"$eslint-stylish"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Run daily jobs",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\scripts\\run_daily_jobs.cmd",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
 		}
 	]
 }

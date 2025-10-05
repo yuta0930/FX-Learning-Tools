@@ -23,6 +23,8 @@ class DecisionParams:
     prefer_limit_retest: bool = True        # 原則リテスト指値を優先
     # --- 表示 ---
     rationale_verbose: bool = True
+    # --- パターンEVの統合重み（EV/Rへ加点する係数）---
+    pattern_ev_weight: float = 0.20
 
 def _ev_r(p: float, ev: EVConfig) -> float:
     # 単位R（勝ち=+1, 負け=-1）での期待値
@@ -59,7 +61,8 @@ def recommend_action(
     in_news: bool,
     spread: float,
     ev_cfg: EVConfig,
-    params: DecisionParams
+    params: DecisionParams,
+    pattern_ev_r: Optional[float] = None,
 ) -> Tuple[str, List[str], float, float]:
     """
     return: (action, reasons, theta_eff, ev_r)
@@ -81,8 +84,19 @@ def recommend_action(
         return "見送り", [f"p={p:.3f} < θ_eff={th_eff:.3f}"], th_eff, float("nan")
 
     evr = _ev_r(p, ev_cfg)
-    if evr < params.min_ev_r:
-        return "見送り", [f"EV/R={evr:.3f} < {params.min_ev_r:.3f}"], th_eff, evr
+    # パターン由来の期待Rを重み付けしてEV/Rに統合
+    combined_evr = evr
+    if pattern_ev_r is not None and isinstance(pattern_ev_r, (int, float)):
+        try:
+            if math.isfinite(pattern_ev_r):
+                combined_evr = evr + params.pattern_ev_weight * float(pattern_ev_r)
+                reasons.append(f"EV/R={evr:.3f} + w*pat={params.pattern_ev_weight:.2f}*{pattern_ev_r:.2f} → {combined_evr:.3f}")
+        except Exception:
+            reasons.append(f"EV/R={evr:.3f}")
+    else:
+        reasons.append(f"EV/R={evr:.3f}")
+    if combined_evr < params.min_ev_r:
+        return "見送り", [f"EV/R*={combined_evr:.3f} < {params.min_ev_r:.3f}"] + reasons, th_eff, combined_evr
 
     # 3) 長ヒゲ直後は成行抑制 → 指値/監視へ誘導（“入らない勇気”）
     o,h,l,c = ohlc
