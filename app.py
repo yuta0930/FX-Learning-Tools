@@ -464,8 +464,9 @@ def prepare_df_feats_for_inference(raw_df: pd.DataFrame) -> pd.DataFrame:
 def _load_model_and_meta():
     """モデルとメタ情報を一度だけ読み込むキャッシュ関数。
     （重複定義されていたため統合）"""
-    model, use_cols = load_break_model("models/break_model.joblib")
+    model, Xcols = load_break_model("models/break_model.joblib")
     meta = load_break_meta("models/break_meta.json")
+    use_cols = (meta.get("features") if isinstance(meta, dict) else None) or Xcols
     return model, use_cols, meta
 
 # --- 復元用ダミークラス（呼び出さない）---
@@ -2242,8 +2243,9 @@ with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
             else:
                 # 4) モデル/メタ読み込み → 推論
                 try:
-                    model, use_cols = load_break_model("models/break_model.joblib")
+                    model, Xcols = load_break_model("models/break_model.joblib")
                     meta_local = load_break_meta("models/break_meta.json")
+                    use_cols = (meta_local.get("features") if isinstance(meta_local, dict) else None) or Xcols
                     pred = predict_with_session_theta(df_feats, model, use_cols, meta_local)
                 except Exception as e:
                     st.error(f"推論に失敗: {e}")
@@ -2471,8 +2473,9 @@ with st.sidebar.expander("🧪 グリッド評価（Apply Best）", expanded=Fal
             return pd.DataFrame()
         try:
             df_feats = prepare_df_feats_for_inference(df_raw)
-            model, use_cols = load_break_model("models/break_model.joblib")
+            model, Xcols = load_break_model("models/break_model.joblib")
             meta_local = load_break_meta("models/break_meta.json")
+            use_cols = (meta_local.get("features") if isinstance(meta_local, dict) else None) or Xcols
             pred = predict_with_session_theta(df_feats, model, use_cols, meta_local)
         except Exception:
             return pd.DataFrame()
@@ -3217,48 +3220,49 @@ if news_df is not None and not news_df.empty:
     df_w, err = safe_call(build_event_windows, news_df, imp_threshold=news_imp_min, mapping=imp_map)
     if err is None and df_w is not None and {"start","end"}.issubset(df_w.columns):
         windows_df = df_w
-    else:
-        st.warning(f"[event windows] フォールバックします: {err or '列不足'}")
-else:
-    st.info("イベント情報なし（抑制は無効）")
-
-# --- 重要イベントの自動強化（ハード化/窓拡大）---
-try:
-    # Feature Flag: 自動ハード化をグローバルに許可するか（デフォルトON）
-    st.session_state.setdefault('allow_auto_harden', True)
-    if st.session_state.get('allow_auto_harden', True) and 'auto_harden' in locals() and auto_harden and (news_df is not None) and not news_df.empty:
-        # 今から見て前後の一定時間は、最低限のハード窓を確保
-        now = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index)>0 else pd.Timestamp.now(tz=JST)
-        # 対象イベント: 重要度4以上、これから±window内
-        near = news_df[news_df['importance'] >= 4]
-        if not near.empty:
-            before = pd.Timedelta(minutes=int(auto_harden_min_before))
-            after  = pd.Timedelta(minutes=int(auto_harden_min_after))
-            # 未来・直近のイベントを中心に追加の窓を作る
-            rows = []
-            for _, r in near.iterrows():
-                t = r['time']
-                if pd.isna(t):
-                    continue
-                rows.append({"start": t - before, "end": t + after, "importance": int(r['importance']), "title": r.get('title','')})
-            if rows:
-                extra = pd.DataFrame(rows)
-                if not windows_df.empty:
-                    windows_df = pd.concat([windows_df, extra], ignore_index=True)
-                else:
-                    windows_df = extra
-                windows_df = windows_df.sort_values('start').reset_index(drop=True)
-                # ハード抑制はユーザ意図を尊重し、強制ONせず、監査ログとトーストのみ
-                st.session_state.setdefault('news_auto_harden_audit', [])
-                st.session_state['news_auto_harden_audit'].append({
-                    'ts': str(pd.Timestamp.utcnow()),
-                    'count': len(rows),
-                    'min_before': int(auto_harden_min_before),
-                    'min_after': int(auto_harden_min_after)
-                })
-                st.toast("重要イベント前後の窓を拡張しました（自動強化）", icon="🟥")
-except Exception as e:
-    st.warning(f"自動強化処理で問題が発生: {e}")
+    try:
+        state = dict(
+            enable_trading=st.session_state.get('enable_trading', False),
+            auto_pause_on_drift=st.session_state.get('auto_pause_on_drift', True),
+            drift_state=st.session_state.get('drift_state', 'normal'),
+            apply_news_filter=st.session_state.get('apply_news_filter', False),
+            guard_state=(st.session_state.get('trade_guard').state() if st.session_state.get('trade_guard') else {}),
+        )
+        # Feature Flag: 自動ハード化をグローバルに許可するか（デフォルトON）
+        st.session_state.setdefault('allow_auto_harden', True)
+        if st.session_state.get('allow_auto_harden', True) and 'auto_harden' in locals() and auto_harden and (news_df is not None) and not news_df.empty:
+            # 今から見て前後の一定時間は、最低限のハード窓を確保
+            now = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index)>0 else pd.Timestamp.now(tz=JST)
+            # 対象イベント: 重要度4以上、これから±window内
+            near = news_df[news_df['importance'] >= 4]
+            if not near.empty:
+                before = pd.Timedelta(minutes=int(auto_harden_min_before))
+                after  = pd.Timedelta(minutes=int(auto_harden_min_after))
+                # 未来・直近のイベントを中心に追加の窓を作る
+                rows = []
+                for _, r in near.iterrows():
+                    t = r['time']
+                    if pd.isna(t):
+                        continue
+                    rows.append({"start": t - before, "end": t + after, "importance": int(r['importance']), "title": r.get('title','')})
+                if rows:
+                    extra = pd.DataFrame(rows)
+                    if not windows_df.empty:
+                        windows_df = pd.concat([windows_df, extra], ignore_index=True)
+                    else:
+                        windows_df = extra
+                    windows_df = windows_df.sort_values('start').reset_index(drop=True)
+                    # ハード抑制はユーザ意図を尊重し、強制ONせず、監査ログとトーストのみ
+                    st.session_state.setdefault('news_auto_harden_audit', [])
+                    st.session_state['news_auto_harden_audit'].append({
+                        'ts': str(pd.Timestamp.utcnow()),
+                        'count': len(rows),
+                        'min_before': int(auto_harden_min_before),
+                        'min_after': int(auto_harden_min_after)
+                    })
+                    st.toast("重要イベント前後の窓を拡張しました（自動強化）", icon="🟥")
+    except Exception as e:
+        st.warning(f"自動強化処理で問題が発生: {e}")
 
 # --- ニュース設定を session_state に同期（合成θ/サマリで参照） ---
 st.session_state['news_win'] = news_win
@@ -6293,6 +6297,8 @@ def compute_expected_pips_table_for_levels(df, levels, fwd_n, break_buffer, spre
 if show_break_prob:
     st.subheader("🎯 今からの水平線ブレイク確率（次H本以内）")
     model, Xcols, meta = load_break_model("models/break_model.joblib")
+    # 学習時の列集合を決定（meta.features があれば優先）
+    use_cols = (meta.get("features") if isinstance(meta, dict) else None) or Xcols
     if model is None:
         st.info("学習モデル（models/break_model.joblib）が見つかりません。先に ai_train_break.py を実行してください。")
     else:
@@ -6309,7 +6315,7 @@ if show_break_prob:
                     df=df,
                     ts_now=None,  # ts_nowは使わないためNoneで明示
                     use_levels=use_levels,
-                    use_cols=meta.get("features", use_cols),
+                    use_cols=use_cols,
                     touch_buffer=touch_buffer,
                     model=model,
                     meta=meta,
@@ -6941,6 +6947,7 @@ else:
         touch_buffer, retest_wait_k
     )
     model, Xcols, meta = load_break_model(prob_model_path)
+    use_cols = (meta.get("features") if isinstance(meta, dict) else None) or Xcols
 
     rows=[]
     ts_now = df.index[-1]
