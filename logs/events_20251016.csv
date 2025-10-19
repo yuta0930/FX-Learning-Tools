@@ -1,0 +1,9 @@
+ts,event,corr,source,symbol,interval,period,latency_ms,error
+2025-10-16 14:30:36.489858+00:00,price_fetch_start,corr-1760625036489,,JPY=X,15m,60d,,
+2025-10-16 14:30:36.900048+00:00,price_fetch_success,corr-1760625036489,yfinance_history,JPY=X,15m,60d,401,
+2025-10-16 14:30:37.294264+00:00,price_fetch_success,corr-1760625036489,yfinance_download,JPY=X,15m,60d,391,
+2025-10-16 14:30:38.674719+00:00,price_fetch_start,corr-1760625036489,,JPY=X,15m,60d,,
+2025-10-16 14:30:40.290057+00:00,price_fetch_start,corr-1760625036489,,JPY=X,15m,60d,,
+2025-10-16 14:33:46.899514+00:00,price_fetch_start,corr-1760625036489,,JPY=X,15m,60d,,
+2025-10-16 14:33:47.458046+00:00,price_fetch_success,corr-1760625036489,yfinance_history,JPY=X,15m,60d,550,
+2025-10-16 14:33:47.953027+00:00,price_fetch_success,corr-1760625036489,yfinance_download,JPY=X,15m,60d,485,

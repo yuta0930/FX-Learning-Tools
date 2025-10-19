@@ -1628,12 +1628,21 @@ compact_weekend = st.sidebar.checkbox(
     value=False,
     help="x軸をカテゴリ扱いにして、週末などの時間ギャップを完全に詰めて表示します（バー間隔は常に等間隔）。"
 )
-# ズーム保持（Plotlyのuirevisionで維持）
-st.session_state.setdefault('preserve_zoom', True)
-st.sidebar.checkbox(
-    "自動更新時にズームを保持",
-    help="自動更新しても、直前のズーム・パン・可視トレース状態を維持します。",
-    key="preserve_zoom",
+# 以前の「自動更新時のズーム保持」機能は廃止しました
+zoom_recent_175 = st.sidebar.checkbox(
+    "直近N本にズーム",
+    value=True,
+    help="表示のたびに指定本数が収まるように自動ズームします。"
+)
+zoom_recent_n = st.sidebar.slider(
+    "直近本数 (N)",
+    min_value=50, max_value=300, value=100, step=5,
+    help="ズーム対象とする直近の本数を選択します。"
+)
+y_zoom_margin_pct = st.sidebar.slider(
+    "ズーム時の縦余白(%)",
+    min_value=0, max_value=50, value=10, step=1,
+    help="ズーム適用時に上下へ追加する余白の割合（データの高値-安値に対する百分率）。"
 )
 # --- 🕒 現在時刻（JST, 秒付き） ---
 with st.sidebar.expander("🕒 現在時刻 (JST)", expanded=True):
@@ -4667,8 +4676,6 @@ hs_tol = st.sidebar.slider("肩の高さ許容（比率）", 0.001, 0.02, 0.003,
 st.sidebar.markdown("---")
 st.sidebar.subheader("表示補助（パターン）")
 pattern_highlight_latest = st.sidebar.checkbox("最新検出の強調表示（vrect）", value=True)
-pattern_auto_zoom_latest = st.sidebar.checkbox("最新へオートズーム", value=False,
-    help="時間軸（非カテゴリ）でのみ適用。該当区間の前後に少し余白を持たせてズームします。")
 
 patterns = []
 try:
@@ -5305,7 +5312,7 @@ for p in patterns_sorted:
     elif kind in ("head_shoulders","inverse_head_shoulders"):
         _draw_hs(fig, p)
 
-# --- 最新パターンの区間をハイライト（vrect）＆オートズーム ---
+# --- 最新パターンの区間をハイライト（vrect） ---
 def _latest_pattern_window(pats: list) -> tuple[pd.Timestamp|None, pd.Timestamp|None, str|None]:
     if not pats:
         return None, None, None
@@ -5337,27 +5344,7 @@ try:
                 log_event('pattern_vrect', kind=str(kind), t_start=str(t0), t_end=str(t1))
             except Exception:
                 pass
-            # オートズーム（カテゴリ軸では適用しない）
-            # ユーザーのズームは維持する: デフォルトで preserve_zoom=True のため、
-            # 自動ズームはパターンが変わった時に一度だけ適用する。
-            if pattern_auto_zoom_latest and not compact_weekend:
-                try:
-                    if st.session_state.get('preserve_zoom', True):
-                        # ズーム維持が有効な場合は自動ズームを行わない
-                        pass
-                    else:
-                        pat_id = f"{kind}|{pd.to_datetime(t0)}|{pd.to_datetime(t1)}"
-                        if st.session_state.get('autozoom_latest_id') != pat_id:
-                            w = (t1 - t0)
-                            pad = pd.Timedelta(minutes=30) if not isinstance(w, pd.Timedelta) or w <= pd.Timedelta(0) else max(pd.Timedelta(minutes=10), w * 0.30)
-                            fig.update_xaxes(range=[t0 - pad, t1 + pad])
-                            st.session_state['autozoom_latest_id'] = pat_id
-                            try:
-                                log_event('pattern_auto_zoom', kind=str(kind), t_start=str(t0), t_end=str(t1), pad=str(pad))
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
+            # 以前の「最新へオートズーム」機能は廃止しました（強調表示のみ維持）
 except Exception:
     pass
 
@@ -5613,72 +5600,36 @@ else:
                      rangebreaks=rb)
 fig.update_yaxes(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID, showline=True, linecolor=COLOR_GRID)
 
-# ★ ここでズーム保持を追加（Plotly uirevision + 最終レンジの保存/復元）
-fig.update_layout(uirevision="fx-live")
-
-# 直前のユーザーズームを復元（x軸中心）
+# 直近N本にズーム
 try:
-    if st.session_state.get('preserve_zoom', True):
-        xr = st.session_state.get('xrange')
-        if isinstance(xr, (list, tuple)) and len(xr) == 2 and all(xr):
-            fig.update_xaxes(range=xr)
-        # Y軸のズームも復元（オプション）
-        yr = st.session_state.get('yrange')
-        if isinstance(yr, (list, tuple)) and len(yr) == 2 and all(v is not None for v in yr):
-            fig.update_yaxes(range=yr)
+    if zoom_recent_175:
+        n = len(df)
+        if n > 0:
+            start_idx = max(0, n - int(zoom_recent_n))
+            if compact_weekend:
+                # カテゴリ軸では位置指定（0..n-1）で範囲を設定
+                fig.update_xaxes(range=[start_idx, n - 1])
+            else:
+                # 日時軸ではタイムスタンプで範囲を設定
+                x0 = df.index[start_idx]
+                x1 = df.index[-1]
+                fig.update_xaxes(range=[x0, x1])
+            # 縦方向に余白を追加
+            try:
+                sub = df.iloc[start_idx:]
+                if len(sub) > 0:
+                    ymin = float(np.nanmin(sub["low"])) if "low" in sub.columns else float(np.nanmin(sub["close"]))
+                    ymax = float(np.nanmax(sub["high"])) if "high" in sub.columns else float(np.nanmax(sub["close"]))
+                    if np.isfinite(ymin) and np.isfinite(ymax) and ymax > ymin:
+                        pad_y = (ymax - ymin) * (y_zoom_margin_pct / 100.0)
+                        fig.update_yaxes(range=[ymin - pad_y, ymax + pad_y])
+            except Exception:
+                pass
 except Exception:
     pass
 
-# 描画（可能なら relayout イベントを拾って次回に活かす）
-_rendered = False
-try:
-    from streamlit_plotly_events import plotly_events  # type: ignore
-    # plotly_events で描画し、ユーザーのズーム・パン操作を検知
-    evs = plotly_events(
-        fig,
-        events=["relayout"],
-        key="main_chart",  # フォールバック時と同一キーに統一
-        override_width="100%",
-    )
-    _rendered = True
-    # 直近の relayout から x軸レンジを保存
-    try:
-        if isinstance(evs, list) and evs:
-            e = evs[-1]
-            # 1) bracket形式
-            x0 = e.get('xaxis.range[0]')
-            x1 = e.get('xaxis.range[1]')
-            # 2) list形式（xaxis.range）
-            if (x0 is None or x1 is None):
-                rng = e.get('xaxis.range')
-                if isinstance(rng, (list, tuple)) and len(rng) == 2:
-                    x0, x1 = rng[0], rng[1]
-            auto = e.get('xaxis.autorange')
-            # preserve_zoom中はデータ更新等による autorange True を無視（保存レンジを消さない）
-            if auto is True and st.session_state.get('preserve_zoom', True):
-                pass
-            elif x0 is not None and x1 is not None:
-                st.session_state['xrange'] = [x0, x1]
-
-            # Y軸のレンジ保存（同様に autroange True は無視）
-            y0 = e.get('yaxis.range[0]')
-            y1 = e.get('yaxis.range[1]')
-            if (y0 is None or y1 is None):
-                yrng = e.get('yaxis.range')
-                if isinstance(yrng, (list, tuple)) and len(yrng) == 2:
-                    y0, y1 = yrng[0], yrng[1]
-            yauto = e.get('yaxis.autorange')
-            if not (yauto is True and st.session_state.get('preserve_zoom', True)):
-                if y0 is not None and y1 is not None:
-                    st.session_state['yrange'] = [y0, y1]
-    except Exception:
-        pass
-except Exception:
-    _rendered = False
-
-if not _rendered:
-    # フォールバック描画（イベント取得不可）
-    st.plotly_chart(fig, use_container_width=True, key="main_chart")
+# 描画（自動更新時のズーム保持は行わず、毎回リセット）
+st.plotly_chart(fig, use_container_width=True, key="main_chart")
 st.caption(f"最終更新: {pd.Timestamp.now(tz=JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
 # ---------------- 近傍ニュース判定（モード別） ----------------

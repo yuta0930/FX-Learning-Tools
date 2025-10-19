@@ -3,3 +3,16 @@ ts,event,corr,source,symbol,interval,period,latency_ms,error
 2025-10-12 13:05:24.998677+00:00,price_fetch_success,corr-1760274323925,yfinance_history,JPY=X,15m,60d,1044,
 2025-10-12 13:05:25.234442+00:00,price_fetch_success,corr-1760274323925,yfinance_download,JPY=X,15m,60d,234,
 2025-10-12 13:05:38.563460+00:00,pattern_vrect,,,,,,,,double_top,2025-10-10 20:00:00+09:00,2025-10-10 23:00:00+09:00
+2025-10-12 23:43:39.487316+00:00,price_fetch_start,corr-1760312619487,,JPY=X,15m,60d,,
+2025-10-12 23:43:39.945533+00:00,price_fetch_success,corr-1760312619487,yfinance_history,JPY=X,15m,60d,450,
+2025-10-12 23:43:40.342520+00:00,price_fetch_success,corr-1760312619487,yfinance_download,JPY=X,15m,60d,394,
+2025-10-12 23:43:43.170403+00:00,price_fetch_start,corr-1760312619487,,JPY=X,15m,60d,,
+2025-10-12 23:43:44.573689+00:00,pattern_vrect,,,,,,,,double_top,2025-10-10 20:00:00+09:00,2025-10-10 23:00:00+09:00
+2025-10-12 23:44:00.608902+00:00,price_fetch_start,corr-1760312619487,,JPY=X,15m,60d,,
+2025-10-12 23:44:04.715390+00:00,pattern_vrect,,,,,,,,double_top,2025-10-10 20:00:00+09:00,2025-10-10 23:00:00+09:00
+2025-10-12 23:44:33.383234+00:00,price_fetch_start,corr-1760312619487,,JPY=X,15m,60d,,
+2025-10-12 23:44:43.298428+00:00,pattern_vrect,,,,,,,,double_top,2025-10-10 20:00:00+09:00,2025-10-10 23:00:00+09:00
+2025-10-12 23:53:42.879251+00:00,price_fetch_start,corr-1760312619487,,JPY=X,15m,60d,,
+2025-10-12 23:53:43.382520+00:00,price_fetch_success,corr-1760312619487,yfinance_history,JPY=X,15m,60d,498,
+2025-10-12 23:53:44.095499+00:00,price_fetch_success,corr-1760312619487,yfinance_download,JPY=X,15m,60d,700,
+2025-10-12 23:53:53.498026+00:00,pattern_vrect,,,,,,,,double_top,2025-10-10 20:00:00+09:00,2025-10-10 23:00:00+09:00

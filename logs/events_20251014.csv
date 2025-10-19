@@ -1,0 +1,671 @@
+ts,event,corr,source,symbol,interval,period,latency_ms,error
+2025-10-14 00:02:09.361123+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:02:09.923069+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,554,
+2025-10-14 00:02:10.138107+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:02:11.057907+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,457,
+2025-10-14 00:02:11.414443+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,355,
+2025-10-14 00:02:14.533098+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:02:17.482456+00:00,pattern_draw,,,,,,,,flag_up,2025-10-13 23:15:00+09:00,2025-10-14 09:00:00+09:00,40,80.71735133616124
+2025-10-14 00:02:17.492905+00:00,pattern_vrect,,,,,,,,flag_up,2025-10-13 23:15:00+09:00,2025-10-14 09:00:00+09:00
+2025-10-14 00:08:28.428028+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:08:29.371132+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:08:29.818012+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,438,
+2025-10-14 00:08:30.348348+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,528,
+2025-10-14 00:08:40.031645+00:00,pattern_draw,,,,,,,,flag_up,2025-10-13 23:15:00+09:00,2025-10-14 09:00:00+09:00,40,80.62512129050334
+2025-10-14 00:08:40.065660+00:00,pattern_vrect,,,,,,,,flag_up,2025-10-13 23:15:00+09:00,2025-10-14 09:00:00+09:00
+2025-10-14 00:18:31.009197+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:18:31.423199+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,409,
+2025-10-14 00:18:31.854956+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,427,
+2025-10-14 00:18:37.736028+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 00:28:30.965169+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:28:31.424640+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,453,
+2025-10-14 00:28:32.001238+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,573,
+2025-10-14 00:28:40.624070+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 00:35:26.347585+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:35:27.216683+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:35:27.412115+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,191,
+2025-10-14 00:35:27.641799+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,224,
+2025-10-14 00:35:37.108189+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 00:38:31.330453+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:38:31.845294+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,509,
+2025-10-14 00:38:32.313240+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,463,
+2025-10-14 00:38:38.019975+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 00:48:30.973824+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:48:31.480259+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,500,
+2025-10-14 00:48:32.090085+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,606,
+2025-10-14 00:48:40.686864+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 00:57:07.583004+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:57:08.508432+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:57:08.960927+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,449,
+2025-10-14 00:57:09.468247+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,503,
+2025-10-14 00:57:16.630790+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 00:58:31.047153+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 00:58:31.551154+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,500,
+2025-10-14 00:58:31.812939+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,252,
+2025-10-14 00:58:42.210854+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 01:05:26.355589+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:05:27.358703+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:05:27.770206+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,407,
+2025-10-14 01:05:28.309710+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,536,
+2025-10-14 01:05:36.346097+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 01:15:29.002534+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:15:29.542366+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,504,
+2025-10-14 01:15:29.786388+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,236,
+2025-10-14 01:15:37.963556+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 01:18:39.155709+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:18:40.148905+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:18:40.617178+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,465,
+2025-10-14 01:18:41.097909+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,475,
+2025-10-14 01:18:50.588148+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 01:28:40.904536+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:28:41.369998+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,460,
+2025-10-14 01:28:42.037087+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,664,
+2025-10-14 01:28:51.236989+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 01:38:40.786670+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:38:41.216667+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,421,
+2025-10-14 01:38:41.431894+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,211,
+2025-10-14 01:38:50.885209+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 01:48:40.941614+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:48:41.406177+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,461,
+2025-10-14 01:48:41.868344+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,459,
+2025-10-14 01:48:51.157995+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 01:58:40.736318+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 01:58:41.225337+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,485,
+2025-10-14 01:58:41.737351+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,508,
+2025-10-14 01:58:50.777428+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 02:08:40.808661+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 02:08:41.206806+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,386,
+2025-10-14 02:08:41.413835+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,205,
+2025-10-14 02:08:49.801104+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 02:18:40.959972+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 02:18:41.471486+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,503,
+2025-10-14 02:18:42.119433+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,644,
+2025-10-14 02:18:52.016798+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 02:28:40.997501+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 02:28:41.485146+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,470,
+2025-10-14 02:28:42.078961+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,590,
+2025-10-14 02:28:54.885153+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 02:38:41.064131+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 02:38:41.717404+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,637,
+2025-10-14 02:38:42.274732+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,555,
+2025-10-14 02:38:52.753319+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 02:48:40.809552+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 02:48:41.360290+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,540,
+2025-10-14 02:48:42.024407+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,660,
+2025-10-14 02:48:53.720332+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 03:07:50.004321+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 03:07:50.531526+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,520,
+2025-10-14 03:07:51.065014+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,529,
+2025-10-14 03:08:01.091537+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 03:17:50.492374+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 03:17:51.123380+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,617,
+2025-10-14 03:17:51.694483+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,568,
+2025-10-14 03:17:58.976329+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 03:27:50.589745+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 03:27:51.152345+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,556,
+2025-10-14 03:27:51.665682+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,509,
+2025-10-14 03:27:59.424233+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 03:37:50.506896+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 03:37:51.051895+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,538,
+2025-10-14 03:37:51.302849+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,246,
+2025-10-14 03:37:58.388859+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 03:47:50.554588+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 03:47:51.116588+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,556,
+2025-10-14 03:47:51.519738+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,399,
+2025-10-14 03:47:59.542332+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 03:57:50.504704+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 03:57:51.067705+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,555,
+2025-10-14 03:57:51.648103+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,576,
+2025-10-14 03:57:58.989973+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 04:08:08.650093+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 04:08:09.292092+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,634,
+2025-10-14 04:08:09.727229+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,428,
+2025-10-14 04:08:17.168799+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:14:44.370846+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:14:44.894397+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,509,
+2025-10-14 07:14:45.379441+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,482,
+2025-10-14 07:14:51.963176+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:15:29.816977+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:15:31.162438+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:15:33.483508+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:15:50.822737+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:18:12.044428+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:18:12.505925+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,453,
+2025-10-14 07:18:13.081644+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,569,
+2025-10-14 07:18:20.896414+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:20:50.960285+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:20:51.525271+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,563,
+2025-10-14 07:20:52.086159+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,557,
+2025-10-14 07:20:56.611657+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:21:07.579040+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:21:08.282823+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:21:16.174175+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:23:49.459973+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:23:49.942807+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,474,
+2025-10-14 07:23:50.507025+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,561,
+2025-10-14 07:23:58.620919+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:26:28.486529+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:26:29.002828+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,513,
+2025-10-14 07:26:29.252886+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,244,
+2025-10-14 07:26:38.243188+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:29:07.375687+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:29:07.854148+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,471,
+2025-10-14 07:29:08.307113+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,447,
+2025-10-14 07:29:18.048220+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:30:39.502554+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:30:40.185234+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:30:40.638640+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,435,
+2025-10-14 07:30:41.178440+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,530,
+2025-10-14 07:30:51.733812+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:31:46.547003+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:31:47.117145+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,567,
+2025-10-14 07:31:47.410962+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,288,
+2025-10-14 07:31:54.980996+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:34:25.414039+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:34:25.918858+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,500,
+2025-10-14 07:34:26.460169+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,532,
+2025-10-14 07:34:33.664615+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:37:04.416036+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:37:04.892014+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,472,
+2025-10-14 07:37:05.421154+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,528,
+2025-10-14 07:37:09.786131+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:39:43.470514+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:39:43.852827+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,381,
+2025-10-14 07:39:44.474720+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,617,
+2025-10-14 07:39:52.788379+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:42:22.257784+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:42:22.648983+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,385,
+2025-10-14 07:42:23.134436+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,483,
+2025-10-14 07:42:31.242300+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:45:01.465501+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:45:02.012193+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,542,
+2025-10-14 07:45:02.500386+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,486,
+2025-10-14 07:45:10.900641+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:45:48.371686+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:45:49.472686+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:45:59.513373+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:46:23.520515+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:46:24.475353+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:46:24.932787+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,454,
+2025-10-14 07:46:25.158608+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,223,
+2025-10-14 07:46:33.075636+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:47:40.379327+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:47:40.801071+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,417,
+2025-10-14 07:47:41.428715+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,625,
+2025-10-14 07:47:49.875734+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:50:19.530855+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:50:20.081328+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,547,
+2025-10-14 07:50:20.300525+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,216,
+2025-10-14 07:50:28.419161+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:52:58.484574+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:52:59.001862+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,512,
+2025-10-14 07:52:59.574108+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,566,
+2025-10-14 07:53:08.786728+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:55:37.398632+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:55:37.803517+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,402,
+2025-10-14 07:55:38.249066+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,442,
+2025-10-14 07:55:45.524670+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 07:58:16.379225+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 07:58:16.758224+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,374,
+2025-10-14 07:58:17.104403+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,344,
+2025-10-14 07:58:25.460100+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:00:10.500271+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:00:10.976254+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:00:11.868644+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,709,
+2025-10-14 08:00:12.426277+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,554,
+2025-10-14 08:00:19.981555+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:00:55.549888+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:01:04.239198+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:03:34.417624+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:03:35.004624+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,580,
+2025-10-14 08:03:35.379483+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,372,
+2025-10-14 08:03:41.826935+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:06:13.363369+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:06:13.847179+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,479,
+2025-10-14 08:06:14.190214+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,338,
+2025-10-14 08:06:22.547565+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:08:52.386252+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:08:52.880003+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,492,
+2025-10-14 08:08:53.432696+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,548,
+2025-10-14 08:09:02.398890+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:11:31.399426+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:11:31.916422+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,509,
+2025-10-14 08:11:32.601664+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,683,
+2025-10-14 08:11:40.352655+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:14:10.440687+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:14:10.862516+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,417,
+2025-10-14 08:14:11.175742+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,311,
+2025-10-14 08:14:19.109727+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:16:49.424426+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:16:49.858424+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,421,
+2025-10-14 08:16:50.208693+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,346,
+2025-10-14 08:16:58.690436+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:19:28.433005+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:19:29.017526+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,579,
+2025-10-14 08:19:29.585499+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,562,
+2025-10-14 08:19:37.702419+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:22:07.434744+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:22:07.806762+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,369,
+2025-10-14 08:22:08.333184+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,524,
+2025-10-14 08:22:15.319329+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:24:46.327441+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:24:46.783302+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,447,
+2025-10-14 08:24:47.309685+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,524,
+2025-10-14 08:24:55.254946+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:27:25.424881+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:27:25.948056+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,516,
+2025-10-14 08:27:26.309151+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,350,
+2025-10-14 08:27:33.657458+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:30:04.393090+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:30:04.825604+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,424,
+2025-10-14 08:30:05.348770+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,519,
+2025-10-14 08:30:12.440044+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:32:43.403335+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:32:44.050349+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,641,
+2025-10-14 08:32:44.580959+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,527,
+2025-10-14 08:32:52.831853+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:35:22.447520+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:35:23.144820+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,693,
+2025-10-14 08:35:23.681357+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,519,
+2025-10-14 08:35:31.695704+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:38:01.413444+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:38:01.865146+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,442,
+2025-10-14 08:38:02.092210+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,225,
+2025-10-14 08:38:10.175430+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:40:40.453934+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:40:40.988221+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,527,
+2025-10-14 08:40:41.508710+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,517,
+2025-10-14 08:40:50.066741+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:43:19.496027+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:43:19.980254+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,478,
+2025-10-14 08:43:20.211829+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,227,
+2025-10-14 08:43:27.512913+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:45:58.582584+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:45:59.185636+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,599,
+2025-10-14 08:45:59.671879+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,477,
+2025-10-14 08:46:08.283030+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:48:37.413056+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:48:38.054180+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,637,
+2025-10-14 08:48:38.592778+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,534,
+2025-10-14 08:48:48.477335+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:51:16.461405+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:51:16.986006+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,518,
+2025-10-14 08:51:17.558574+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,570,
+2025-10-14 08:51:25.449332+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:53:55.426274+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:53:56.072273+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,640,
+2025-10-14 08:53:56.557513+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,482,
+2025-10-14 08:54:04.964220+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:56:34.458963+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:56:34.782141+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,320,
+2025-10-14 08:56:35.428941+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,644,
+2025-10-14 08:56:44.510076+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 08:59:13.450746+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 08:59:13.898095+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,443,
+2025-10-14 08:59:14.452159+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,551,
+2025-10-14 08:59:22.854596+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:01:52.614056+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:01:53.102043+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,482,
+2025-10-14 09:01:53.407115+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,292,
+2025-10-14 09:02:01.663575+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:04:31.352655+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:04:31.786659+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,430,
+2025-10-14 09:04:32.255530+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,466,
+2025-10-14 09:04:37.952089+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:07:10.564184+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:07:10.983030+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,413,
+2025-10-14 09:07:11.406102+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,418,
+2025-10-14 09:07:19.518254+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:09:49.429052+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:09:49.974255+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,532,
+2025-10-14 09:09:50.524698+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,547,
+2025-10-14 09:09:59.140303+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:12:28.427335+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:12:28.843746+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,411,
+2025-10-14 09:12:29.267981+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,422,
+2025-10-14 09:12:36.657451+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:15:07.370337+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:15:07.857911+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,484,
+2025-10-14 09:15:08.400977+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,539,
+2025-10-14 09:15:17.355870+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:17:46.463711+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:17:46.875584+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,403,
+2025-10-14 09:17:47.401981+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,522,
+2025-10-14 09:17:55.125786+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:20:25.462962+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:20:25.833606+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,366,
+2025-10-14 09:20:26.251448+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,414,
+2025-10-14 09:20:36.501748+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 09:23:04.531887+00:00,price_fetch_start,corr-1760400129361,,JPY=X,15m,60d,,
+2025-10-14 09:23:04.915054+00:00,price_fetch_success,corr-1760400129361,yfinance_history,JPY=X,15m,60d,378,
+2025-10-14 09:23:05.330359+00:00,price_fetch_success,corr-1760400129361,yfinance_download,JPY=X,15m,60d,413,
+2025-10-14 09:23:12.767549+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 10:00:59.107770+00:00,price_fetch_start,corr-1760436059107,,JPY=X,15m,60d,,
+2025-10-14 10:00:59.507751+00:00,price_fetch_success,corr-1760436059107,yfinance_history,JPY=X,15m,60d,383,
+2025-10-14 10:00:59.967327+00:00,price_fetch_success,corr-1760436059107,yfinance_download,JPY=X,15m,60d,455,
+2025-10-14 10:01:05.737867+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 10:03:53.174768+00:00,price_fetch_start,corr-1760436059107,,JPY=X,15m,60d,,
+2025-10-14 10:03:53.555425+00:00,price_fetch_success,corr-1760436059107,yfinance_history,JPY=X,15m,60d,375,
+2025-10-14 10:03:53.895310+00:00,price_fetch_success,corr-1760436059107,yfinance_download,JPY=X,15m,60d,337,
+2025-10-14 10:03:58.142534+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 10:06:17.244077+00:00,price_fetch_start,corr-1760436059107,,JPY=X,15m,60d,,
+2025-10-14 10:06:17.679527+00:00,price_fetch_success,corr-1760436059107,yfinance_history,JPY=X,15m,60d,432,
+2025-10-14 10:06:18.147572+00:00,price_fetch_success,corr-1760436059107,yfinance_download,JPY=X,15m,60d,466,
+2025-10-14 10:06:23.589133+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 10:08:56.235472+00:00,price_fetch_start,corr-1760436059107,,JPY=X,15m,60d,,
+2025-10-14 10:08:56.617191+00:00,price_fetch_success,corr-1760436059107,yfinance_history,JPY=X,15m,60d,377,
+2025-10-14 10:08:57.028396+00:00,price_fetch_success,corr-1760436059107,yfinance_download,JPY=X,15m,60d,410,
+2025-10-14 10:09:01.671595+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 10:11:38.937434+00:00,price_fetch_start,corr-1760436059107,,JPY=X,15m,60d,,
+2025-10-14 10:11:39.393689+00:00,price_fetch_success,corr-1760436059107,yfinance_history,JPY=X,15m,60d,452,
+2025-10-14 10:11:39.886673+00:00,price_fetch_success,corr-1760436059107,yfinance_download,JPY=X,15m,60d,490,
+2025-10-14 10:11:44.871165+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 12:59:12.986241+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 12:59:13.585754+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,583,
+2025-10-14 12:59:14.170777+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,581,
+2025-10-14 12:59:22.337515+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:01:53.884467+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:01:54.325380+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,433,
+2025-10-14 13:01:54.541921+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,212,
+2025-10-14 13:02:00.425511+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:03:25.176855+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:03:25.650292+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,469,
+2025-10-14 13:03:26.160434+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,506,
+2025-10-14 13:03:32.883337+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:03:44.045321+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:03:50.511835+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:04:09.936081+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:04:15.834500+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:04:28.823552+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:04:29.461551+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,633,
+2025-10-14 13:04:29.778177+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,314,
+2025-10-14 13:04:36.130176+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:04:50.360207+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:04:56.446725+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:05:15.062685+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:05:22.071692+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:05:32.792802+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:05:33.344687+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,542,
+2025-10-14 13:05:33.595082+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,246,
+2025-10-14 13:05:39.605174+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:05:55.316572+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:06:01.796270+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:06:12.276189+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:06:18.849215+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:06:33.494211+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:06:40.555189+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:06:54.939258+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:06:55.421242+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,476,
+2025-10-14 13:06:55.909414+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,484,
+2025-10-14 13:07:02.742283+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:07:13.185296+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:07:20.230186+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:07:33.895895+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:07:40.383632+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:07:53.771132+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:08:00.531935+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:08:13.914064+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:08:14.381713+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,459,
+2025-10-14 13:08:15.049327+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,664,
+2025-10-14 13:08:21.665438+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:08:36.002919+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:08:43.073846+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:08:58.974846+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:09:05.781755+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:09:22.237505+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:09:22.780505+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,537,
+2025-10-14 13:09:23.271352+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,486,
+2025-10-14 13:09:29.929227+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:09:43.717835+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:09:50.363839+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:10:08.006701+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:10:15.080579+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:10:31.238669+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:10:31.912666+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,666,
+2025-10-14 13:10:32.212293+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,295,
+2025-10-14 13:10:38.914289+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:10:53.461837+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:10:59.702802+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:11:13.773796+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:11:20.203930+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:11:33.170791+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:11:33.794566+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,619,
+2025-10-14 13:11:34.463275+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,666,
+2025-10-14 13:11:40.720306+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:11:53.361890+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:11:59.820024+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:12:12.709314+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:12:19.364427+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:12:36.472427+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:12:37.167426+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,687,
+2025-10-14 13:12:37.474700+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,304,
+2025-10-14 13:12:44.279329+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:13:00.759390+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:13:07.581272+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:13:25.037089+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:13:31.697104+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:13:48.197105+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:13:48.671105+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,469,
+2025-10-14 13:13:49.204300+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,529,
+2025-10-14 13:13:55.885412+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:14:12.087820+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:14:19.174800+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:14:35.317148+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:14:56.339401+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:14:56.830464+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,483,
+2025-10-14 13:14:57.344633+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,510,
+2025-10-14 13:15:04.350599+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:15:17.970352+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:15:24.933561+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:15:45.262558+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:15:52.219688+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:16:07.838374+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:16:08.440557+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,595,
+2025-10-14 13:16:08.705970+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,262,
+2025-10-14 13:16:15.843390+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:16:34.347484+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:16:41.543492+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:17:00.681358+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:17:07.630353+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:17:25.651207+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:17:26.206196+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,545,
+2025-10-14 13:17:26.688901+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,479,
+2025-10-14 13:17:33.593650+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:17:52.913446+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:18:00.289045+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:18:18.093507+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:18:25.002493+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:18:44.309782+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:18:44.786741+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,469,
+2025-10-14 13:18:45.057551+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,266,
+2025-10-14 13:18:52.333547+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:19:07.255559+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:19:14.096443+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:19:38.548680+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:19:45.649499+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:19:58.849706+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:19:59.261236+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,403,
+2025-10-14 13:19:59.753773+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,488,
+2025-10-14 13:20:06.726070+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:20:26.652729+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:20:33.454359+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:20:54.282441+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:21:01.254183+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:21:14.869740+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:21:15.419681+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,543,
+2025-10-14 13:21:16.137115+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,710,
+2025-10-14 13:21:22.961806+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:21:43.433139+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:21:50.116922+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:22:09.285890+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:22:16.562173+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:22:33.360171+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:22:33.835148+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,466,
+2025-10-14 13:22:34.329421+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,490,
+2025-10-14 13:22:41.305765+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:22:59.285641+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:23:05.958513+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:23:27.920021+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:23:34.677823+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:23:50.156044+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:23:50.724044+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,561,
+2025-10-14 13:23:51.279391+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,551,
+2025-10-14 13:23:58.100580+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:24:20.000398+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:24:26.962957+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:24:51.561381+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:24:52.172344+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,590,
+2025-10-14 13:24:52.749802+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,572,
+2025-10-14 13:25:00.084894+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:25:14.055609+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:25:20.830344+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:25:38.567693+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:25:46.146702+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:25:59.750167+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:26:00.316170+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,557,
+2025-10-14 13:26:00.960339+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,638,
+2025-10-14 13:26:08.102432+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:26:26.426871+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:26:33.462072+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:26:54.557584+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:27:01.434473+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:27:20.241530+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:27:20.729531+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,481,
+2025-10-14 13:27:20.974639+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,241,
+2025-10-14 13:27:27.943743+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:27:44.720790+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:27:51.450814+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:28:14.698347+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:28:21.761010+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:28:39.926780+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:28:40.481783+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,549,
+2025-10-14 13:28:41.027016+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,541,
+2025-10-14 13:28:47.922546+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:29:08.416686+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:29:15.362708+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:29:35.884258+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:30:07.700165+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:30:08.321071+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,608,
+2025-10-14 13:30:08.612950+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,287,
+2025-10-14 13:30:15.495410+00:00,pattern_draw,,,,,,,,flag_up,2025-10-14 12:45:00+09:00,2025-10-14 22:30:00+09:00,40,72.4356556004134
+2025-10-14 13:30:15.533412+00:00,pattern_vrect,,,,,,,,flag_up,2025-10-14 12:45:00+09:00,2025-10-14 22:30:00+09:00
+2025-10-14 13:30:31.612390+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:30:38.561505+00:00,pattern_draw,,,,,,,,flag_up,2025-10-14 12:45:00+09:00,2025-10-14 22:30:00+09:00,40,72.4356556004134
+2025-10-14 13:30:38.584480+00:00,pattern_vrect,,,,,,,,flag_up,2025-10-14 12:45:00+09:00,2025-10-14 22:30:00+09:00
+2025-10-14 13:30:59.558275+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:31:30.648981+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:31:31.223978+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,568,
+2025-10-14 13:31:31.734061+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,507,
+2025-10-14 13:31:58.211079+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:32:25.963172+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:32:33.134173+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:32:50.142096+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:32:50.736102+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,588,
+2025-10-14 13:32:51.008835+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,264,
+2025-10-14 13:32:57.631851+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:33:16.194745+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:33:49.958846+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:33:56.973832+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:34:14.363745+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:34:14.987734+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,616,
+2025-10-14 13:34:15.741531+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,749,
+2025-10-14 13:34:22.852651+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:34:41.349542+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:34:48.256234+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:35:06.940108+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:35:13.720219+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:35:30.589233+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:35:31.128237+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,533,
+2025-10-14 13:35:31.707051+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,574,
+2025-10-14 13:35:38.570928+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:35:56.978316+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:36:41.381780+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:36:41.941658+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,554,
+2025-10-14 13:36:42.179639+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,234,
+2025-10-14 13:37:10.543559+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:37:17.470676+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:37:33.758440+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:37:40.681804+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:38:02.315951+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:38:02.913360+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,592,
+2025-10-14 13:38:03.385641+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,468,
+2025-10-14 13:38:10.258667+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:38:29.079071+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:39:11.989298+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:39:12.581227+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,584,
+2025-10-14 13:39:13.127378+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,540,
+2025-10-14 13:39:43.726457+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:40:09.890131+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:40:16.861337+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:40:35.088310+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:40:35.672310+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,576,
+2025-10-14 13:40:36.238449+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,562,
+2025-10-14 13:40:43.159569+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:41:05.737372+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:41:12.805487+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:41:32.911363+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:42:02.264486+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:42:02.759496+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,489,
+2025-10-14 13:42:03.278402+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,513,
+2025-10-14 13:42:36.491417+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:43:15.260999+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:43:15.749989+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,481,
+2025-10-14 13:43:16.231428+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,477,
+2025-10-14 13:43:22.989554+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:43:35.851545+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:43:42.744552+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:44:04.268522+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:44:40.463815+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:44:40.978843+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,510,
+2025-10-14 13:44:41.447467+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,461,
+2025-10-14 13:45:07.863387+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:45:39.605291+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:46:03.915291+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:46:04.402410+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,479,
+2025-10-14 13:46:04.928593+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,522,
+2025-10-14 13:46:11.895479+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:46:25.286613+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:46:32.406608+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:46:53.619013+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:47:00.588022+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:47:19.028127+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:47:19.566137+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,532,
+2025-10-14 13:47:20.069569+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,500,
+2025-10-14 13:47:59.794898+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:48:31.734898+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:48:32.270937+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,531,
+2025-10-14 13:48:32.834639+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,559,
+2025-10-14 13:48:39.730634+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:48:58.616401+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:49:05.529525+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:49:23.743413+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:49:54.871415+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:49:55.396529+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,519,
+2025-10-14 13:49:55.990201+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,589,
+2025-10-14 13:50:32.554286+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:50:39.898395+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:50:57.045216+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:50:57.735224+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,682,
+2025-10-14 13:50:58.301033+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,559,
+2025-10-14 13:51:38.603086+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:52:15.866316+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:52:16.472380+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,597,
+2025-10-14 13:52:16.767104+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,290,
+2025-10-14 13:52:51.037763+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:52:58.012727+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:53:15.099605+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:53:21.989724+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:53:45.328726+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:53:45.866606+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,530,
+2025-10-14 13:53:46.399927+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,526,
+2025-10-14 13:54:15.608930+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:54:57.619436+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:54:58.194502+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,569,
+2025-10-14 13:54:58.440974+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,242,
+2025-10-14 13:55:05.329979+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
+2025-10-14 13:55:22.805928+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:55:58.483296+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:55:59.104707+00:00,price_fetch_success,corr-1760446752986,yfinance_history,JPY=X,15m,60d,616,
+2025-10-14 13:55:59.381832+00:00,price_fetch_success,corr-1760446752986,yfinance_download,JPY=X,15m,60d,273,
+2025-10-14 13:56:37.892105+00:00,price_fetch_start,corr-1760446752986,,JPY=X,15m,60d,,
+2025-10-14 13:56:45.116016+00:00,pattern_vrect,,,,,,,,double_top,2025-10-14 05:15:00+09:00,2025-10-14 08:00:00+09:00
