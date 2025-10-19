@@ -55,3 +55,54 @@ def test_gate_blocks_in_news_window():
     out = apply_final_gate(df, windows, state=state)
     assert out.loc[0,'trade_ok'] == False and out.loc[1,'trade_ok'] == True
     assert out.loc[0,'gate_reason'] == 'news_block'
+
+
+def test_gate_blocks_on_guard_cooldown():
+    df = pd.DataFrame({
+        'timestamp': pd.date_range('2025-01-01', periods=3, freq='15min', tz='UTC'),
+        'signal': [True, True, True],
+    })
+    state = {
+        'enable_trading': True,
+        'auto_pause_on_drift': True,
+        'drift_state': 'normal',
+        'apply_news_filter': False,
+        'guard_state': {'in_cooldown': True},
+    }
+    out = apply_final_gate(df, None, state=state)
+    assert (~out['trade_ok']).all()
+    assert (out['gate_reason'] == 'guard_block').all()
+
+
+def test_gate_disabled_overrides_trade():
+    df = pd.DataFrame({
+        'timestamp': pd.date_range('2025-01-01', periods=2, freq='15min', tz='UTC'),
+        'signal': [True, True],
+    })
+    state = {
+        'enable_trading': False,
+        'auto_pause_on_drift': False,
+        'drift_state': 'normal',
+        'apply_news_filter': False,
+        'guard_state': {'in_cooldown': False},
+    }
+    out = apply_final_gate(df, None, state=state)
+    assert (~out['trade_ok']).all()
+    assert (out['gate_reason'] == 'disabled').all()
+
+
+def test_gate_no_signal_sets_reason():
+    df = pd.DataFrame({
+        'timestamp': pd.date_range('2025-01-01', periods=2, freq='15min', tz='UTC'),
+        'signal': [False, False],
+    })
+    state = {
+        'enable_trading': True,
+        'auto_pause_on_drift': False,
+        'drift_state': 'normal',
+        'apply_news_filter': False,
+        'guard_state': {'in_cooldown': False},
+    }
+    out = apply_final_gate(df, None, state=state)
+    assert (~out['trade_ok']).all()
+    assert (out['gate_reason'] == 'no_signal').all()

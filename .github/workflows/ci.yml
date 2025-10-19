@@ -39,6 +39,11 @@ jobs:
             echo '::error::Black formatting issues detected. Run "black ." locally.' && exit 1
           )
 
+      - name: Type Check (mypy)
+        run: |
+          python -m pip install mypy
+          mypy .
+
       - name: Run PyTest
         env:
           PYTHONWARNINGS: always

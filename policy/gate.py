@@ -68,16 +68,16 @@ def apply_final_gate(
         # Reason column
         reason = pd.Series("ok", index=df_out.index, dtype=object)
         if not enable:
-            reason = reason.mask(True, "disabled")
+            reason[:] = "disabled"
         if not guard_ok:
-            reason = reason.mask(True, "guard_block")
+            reason[:] = "guard_block"
         if drift_block:
-            reason = reason.mask(True, "drift_block")
+            reason[:] = "drift_block"
         if apply_news_filter:
             if isinstance(news_block, (pd.Series, np.ndarray)):
                 reason = reason.mask(news_block, "news_block")
             elif news_block:
-                reason = reason.mask(True, "news_block")
+                reason[:] = "news_block"
         if signal_col in df_out.columns:
             reason = reason.mask(~sig_bool, "no_signal")
         df_out["gate_reason"] = reason

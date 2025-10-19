@@ -4,6 +4,15 @@ import pandas as pd
 import streamlit as st
 # Centralized timezone helpers
 from utils.time_utils import JST, to_jst
+import logging
+
+# --- Logging setup (lightweight) ---
+logger = logging.getLogger("fx.app")
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    logger.addHandler(_h)
 
 # Initialize session state once
 def init_session_state():
@@ -59,12 +68,12 @@ def calc_psi_and_exrate(curr_probs, baseline_probs, theta_up, theta_dn):
             js = ds.get('js', float('nan'))
             hell = ds.get('hellinger', float('nan'))
         except Exception as e:
-            print(f"ドリフト指標計算エラー: {e}")
+            logger.exception("ドリフト指標計算エラー")
         try:
             theta_rep = float(np.median([theta_up, theta_dn]))
             ex_rate = threshold_exceed_rate(np.array(curr_probs, float), theta_rep)
         except Exception as e:
-            print(f"θ超過率計算エラー: {e}")
+            logger.exception("θ超過率計算エラー")
     return psi_val, sev, ex_rate, kl, js, hell
 # （削除）重複していた __main__ テストブロックは冗長のため整理しました。
 from monitoring import compute_psi, psi_severity, threshold_exceed_rate, healthcheck, safe_call, drift_summary
@@ -125,86 +134,12 @@ def compute_latest_atr(price_df, period: int = 14):
 import json
 import numpy as np
 from functools import lru_cache
+from utils.app_core import _load_and_validate_baseline as _load_and_validate_baseline_core
+from utils.app_core import compute_drift_score
 
-def _load_and_validate_baseline(meta_path: str = "models/break_meta.json",
-                                 calib_path: str = "reports/break_calibration.json",
-                                 *,
-                                 min_samples: int = 5,
-                                 warn_on_clip: bool = True):
-    """ベースライン確率分布を読み込み検証するユーティリティ。
-
-    読み込みソース:
-      1. メタ JSON (`baseline_proba` フィールド: 閾値比較などに使う代表値)
-      2. 較正 JSON (`prob_mean` 配列: 校正カーブ上の代表確率群) -> PSI / drift 監視用の近似分布として利用
-
-    検証ルール:
-      - NaN 削除（比率を警告）
-      - 範囲外値は 0-1 にクリップ（オプション警告）
-      - サンプル数閾値 (min_samples) 未満なら不安定警告し None 扱い
-
-    Returns:
-      (baseline_proba: float, baseline_probs: np.ndarray | None, warnings: list[str])
-
-    実装メモ:
-      - エラーは握りつぶしつつ warning に集約（UI レイヤで st.warning 表示）
-      - 将来的に dataclass 返却へ拡張しやすいようタプル形式を維持
-    """
-    warns: list[str] = []
-    base_p = 0.5
-    probs_arr = None
-    # --- meta 読み込み ---
-    try:
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta_json = json.load(f)
-        # fallback を 0.5 に固定（バイナリ無情報基準）
-        base_p = float(meta_json.get("baseline_proba", 0.5))
-        if not (0.0 <= base_p <= 1.0):  # 異常値はクリップせず警告し 0.5 に戻す
-            warns.append(f"baseline_proba 異常値={base_p:.4f} -> 0.5 にリセット")
-            base_p = 0.5
-    except FileNotFoundError:
-        warns.append(f"metaファイル未検出: {meta_path}")
-    except json.JSONDecodeError as e:
-        warns.append(f"meta JSON 解析失敗: {e}")
-    except Exception as e:
-        warns.append(f"meta読込失敗: {e}")
-
-    # --- calibration 読み込み ---
-    try:
-        with open(calib_path, "r", encoding="utf-8") as f:
-            calib_json = json.load(f)
-        raw = calib_json.get("prob_mean") or calib_json.get("calibration", {}).get("prob_mean")
-        if raw is not None:
-            probs_arr = np.asarray(raw, dtype=float)
-    except FileNotFoundError:
-        warns.append(f"calibrationファイル未検出: {calib_path}")
-    except json.JSONDecodeError as e:
-        warns.append(f"calibration JSON 解析失敗: {e}")
-    except Exception as e:
-        warns.append(f"calibration読込失敗: {e}")
-
-    # --- 検証 ---
-    if probs_arr is not None:
-        if probs_arr.size == 0:
-            warns.append("baseline_probs が空 -> 利用不可 (PSI skip)")
-            probs_arr = None
-        else:
-            nan_mask = ~np.isfinite(probs_arr)
-            if nan_mask.any():
-                ratio = nan_mask.mean()
-                warns.append(f"baseline_probs NaN/inf {ratio:.1%} -> 除去")
-                probs_arr = probs_arr[~nan_mask]
-            if probs_arr.size == 0:
-                warns.append("baseline_probs 除去後に空 -> 利用不可")
-                probs_arr = None
-            else:
-                if not ((probs_arr >= 0).all() and (probs_arr <= 1).all()):
-                    if warn_on_clip:
-                        warns.append("baseline_probs に 0-1 範囲外 -> クリップ")
-                    probs_arr = np.clip(probs_arr, 0, 1)
-                if probs_arr.size < min_samples:
-                    warns.append(f"baseline_probs サンプル不足 {probs_arr.size} < {min_samples} -> 不使用")
-                    probs_arr = None
-    return base_p, probs_arr, warns
+def _load_and_validate_baseline(*args, **kwargs):
+    """app_core のUI非依存版をラップ。app 側は UI 表示（warning）との結合のみ担う。"""
+    return _load_and_validate_baseline_core(*args, **kwargs)
 
 baseline_proba, baseline_probs, _baseline_warns = _load_and_validate_baseline()
 if '_baseline_warns' in globals() and _baseline_warns:
@@ -265,10 +200,7 @@ from policy.gate import apply_final_gate as _apply_final_gate_core
 from inference_break import load_break_model, load_break_meta, predict_with_session_theta
 from ev_cache import get_ev_tables
 
-import streamlit as st
-
-# === app.py に追加（import の下あたり） ===
-import pandas as pd
+# （重複の import を整理済み）
 
 # 学習時と同じ関数を使う
 from ml.time_consistency import build_features
@@ -321,8 +253,8 @@ def apply_final_gate(pred_df: pd.DataFrame,
         st.session_state.setdefault('gate_pass_hist', [])
         pr_val = float(pass_rate) if isinstance(pass_rate, (int, float)) and np.isfinite(pass_rate) else np.nan
         st.session_state['gate_pass_hist'] = (st.session_state['gate_pass_hist'] + [pr_val])[-200:]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("gate stats update failed: %s", e)
 
     # --- Gate直後の推奨（方向別 pat EV を自動反映）---
     try:
@@ -383,9 +315,32 @@ def apply_final_gate(pred_df: pd.DataFrame,
             except Exception:
                 in_news_flag = False
 
-            # OHLC（最新バー）
+            # OHLC（最新バー）: 未定義の df は使わず、row -> df_out の順で取得
             try:
-                o = float(df['open'].iloc[-1]); h=float(df['high'].iloc[-1]); l=float(df['low'].iloc[-1]); c=float(df['close'].iloc[-1])
+                def _get_from_row_or_dfout(name: str):
+                    # row から取得（存在すれば）
+                    try:
+                        v = row.get(name) if hasattr(row, 'get') else (row[name] if name in row.index else None)
+                        if v is not None:
+                            fv = float(v)
+                            if np.isfinite(fv):
+                                return fv
+                    except Exception:
+                        pass
+                    # df_out から取得（末尾行）
+                    try:
+                        if isinstance(df_out, pd.DataFrame) and name in df_out.columns and len(df_out) > 0:
+                            fv = float(df_out[name].iloc[-1])
+                            if np.isfinite(fv):
+                                return fv
+                    except Exception:
+                        pass
+                    return np.nan
+
+                o = _get_from_row_or_dfout('open')
+                h = _get_from_row_or_dfout('high')
+                l = _get_from_row_or_dfout('low')
+                c = _get_from_row_or_dfout('close')
             except Exception:
                 o = h = l = c = np.nan
 
@@ -418,9 +373,9 @@ def apply_final_gate(pred_df: pd.DataFrame,
                     st.caption(" / ".join(map(str, reasons[:3])))
         else:
             st.session_state['last_recommendation'] = None
-    except Exception:
-        # 推奨はソフトフェイル
-        pass
+    except Exception as e:
+        # 推奨はソフトフェイル（ログだけ残す）
+        logger.warning("recommendation block failed: %s", e)
     return df_out
 
 def prepare_df_feats_for_inference(raw_df: pd.DataFrame) -> pd.DataFrame:
@@ -485,7 +440,7 @@ def _pick_session_from_ts(ts: pd.Timestamp):
 
 def pick_theta_for_now(meta):
     # 時間帯ごとθ → なければグローバルθでフォールバック
-    now = pd.Timestamp.now(tz="Asia/Tokyo")
+    now = pd.Timestamp.now(tz=JST)
     sess = _pick_session_from_ts(now)
     tbs  = meta.get("theta_by_session", {})
     if sess and sess in tbs and "theta" in tbs[sess]:
@@ -569,34 +524,7 @@ def update_adaptive_theta(prob_history: list, window: int = 200) -> float:
     return theta_final
 
 # ---------------- Drift 総合指標（PSI/KL/JS/H） ----------------
-def compute_drift_score(dm: dict,
-                        w: dict | None = None,
-                        caps: dict | None = None) -> float:
-    """dm: {'psi','kl','js','hellinger'}
-    各指標を0-1に正規化（capで頭打ち）後、重み付き合算して0-1の総合スコアを返す。
-    既定重み: psi 0.5, kl 0.2, js 0.2, h 0.1
-    既定cap: psi 0.5, kl 0.5, js 0.5, h 1.0
-    """
-    w = w or st.session_state.get('drift_weights', {'psi':0.5,'kl':0.2,'js':0.2,'h':0.1})
-    caps = caps or st.session_state.get('drift_caps', {'psi':0.5,'kl':0.5,'js':0.5,'h':1.0})
-    psi = float(dm.get('psi', float('nan')))
-    kl  = float(dm.get('kl',  float('nan')))
-    js  = float(dm.get('js',  float('nan')))
-    h   = float(dm.get('hellinger', float('nan')))
-    def nz(x):
-        return x if np.isfinite(x) and x>=0 else 0.0
-    psi_n = min(1.0, nz(psi) / max(1e-9, caps.get('psi',0.5)))
-    kl_n  = min(1.0, nz(kl)  / max(1e-9, caps.get('kl',0.5)))
-    js_n  = min(1.0, nz(js)  / max(1e-9, caps.get('js',0.5)))
-    h_n   = min(1.0, nz(h)   / max(1e-9, caps.get('h', 1.0)))
-    score = (psi_n * w.get('psi',0.5) +
-             kl_n  * w.get('kl', 0.2) +
-             js_n  * w.get('js', 0.2) +
-             h_n   * w.get('h',  0.1))
-    # 重み和で正規化（安全）
-    wsum = sum([w.get('psi',0.5), w.get('kl',0.2), w.get('js',0.2), w.get('h',0.1)])
-    if wsum <= 0: wsum = 1.0
-    return float(np.clip(score / wsum, 0.0, 1.0))
+# compute_drift_score は utils.app_core の実装を使用
 
 def _now_session_name(ts: pd.Timestamp) -> str:
     try:
@@ -614,43 +542,30 @@ def is_in_news_window(ts: pd.Timestamp, windows_df: pd.DataFrame, *, news_win_mi
         return False
 
 def compute_final_theta_for_time(ts: pd.Timestamp, meta: dict, windows_df: pd.DataFrame) -> tuple[float, dict]:
-    """最終θを一本化して返す。
-    優先順位: base→session補正（max）→ドリフト→ニュース（ソフト時のみ）→クリップ
-    breakdown で各寄与を返す。
+    """最終θを一本化して返す（UI層）。
+    内部ロジックは utils.app_core.compute_final_theta_for_time_pure に委譲し、
+    必要な session_state の副作用（soft_suppress_active 等）をここで維持する。
     """
-    theta_min = st.session_state.get('theta_min', 0.40)
-    theta_max = st.session_state.get('theta_max', 0.85)
-    base_theta = st.session_state.get('theta_adaptive', st.session_state.get('theta_base', 0.60))
+    from utils.app_core import compute_final_theta_for_time_pure
 
-    # セッション別（meta优先）。競合を避けるため base と session_theta の“高い方”を採用
-    try:
-        session_theta = pick_theta_for_now(meta)
-    except Exception:
-        session_theta = base_theta
-    base_after_session = max(float(base_theta), float(session_theta))
-    b_session = base_after_session - base_theta
-
-    # ドリフトブースト
-    b_drift = float(st.session_state.get('theta_bump_drift', 0.03)) if st.session_state.get('theta_drift_bump_active', False) else 0.0
-
-    # ニュース（ソフト抑制時のみ）
-    in_news = is_in_news_window(ts, windows_df, news_win_minutes=st.session_state.get('news_win', 30),
-                                imp_min=st.session_state.get('news_imp_min', 3), mode_label=st.session_state.get('news_filter_mode', "重要度別（赤影と同じ）"))
-    st.session_state['soft_suppress_active'] = bool(in_news and st.session_state.get('use_soft_suppress', False))
-    b_news = float(st.session_state.get('theta_bump_in_news', 0.03)) if st.session_state['soft_suppress_active'] else 0.0
-
-    theta_final = base_after_session + b_drift + b_news
-    theta_final = max(theta_min, min(theta_max, theta_final))
-    breakdown = {
-        'base': float(base_theta),
-        'session_used': float(session_theta),
-        'session_bump': float(b_session),
-        'drift_bump': float(b_drift),
-        'news_bump': float(b_news),
-        'min': float(theta_min),
-        'max': float(theta_max),
-        'in_news': bool(in_news),
+    # session_state から設定を収集
+    settings = {
+        'theta_min': st.session_state.get('theta_min', 0.40),
+        'theta_max': st.session_state.get('theta_max', 0.85),
+        'theta_adaptive': st.session_state.get('theta_adaptive', st.session_state.get('theta_base', 0.60)),
+        'theta_base': st.session_state.get('theta_base', 0.60),
+        'theta_drift_bump_active': st.session_state.get('theta_drift_bump_active', False),
+        'theta_bump_drift': st.session_state.get('theta_bump_drift', 0.03),
+        'use_soft_suppress': st.session_state.get('use_soft_suppress', False),
+        'theta_bump_in_news': st.session_state.get('theta_bump_in_news', 0.03),
+        'news_win': st.session_state.get('news_win', 30),
+        'news_imp_min': st.session_state.get('news_imp_min', 3),
+        'news_filter_mode': st.session_state.get('news_filter_mode', "重要度別（赤影と同じ）"),
     }
+
+    theta_final, breakdown = compute_final_theta_for_time_pure(ts, meta, windows_df, settings)
+    # UI側の副作用を反映
+    st.session_state['soft_suppress_active'] = bool(breakdown.get('in_news', False) and settings.get('use_soft_suppress', False))
     return float(theta_final), breakdown
 
 def render_meta_summary(df: pd.DataFrame, windows_df: pd.DataFrame, meta: dict):
@@ -683,9 +598,27 @@ def render_meta_summary(df: pd.DataFrame, windows_df: pd.DataFrame, meta: dict):
     st.session_state.setdefault('theta_hist', [])
     st.session_state.setdefault('drift_score_hist', [])
     st.session_state.setdefault('evpt_hist', [])
+    st.session_state.setdefault('theta_breakdown_hist', [])  # θ内訳履歴
     st.session_state['theta_hist'] = (st.session_state['theta_hist'] + [float(theta_final)])[-200:]
     st.session_state['drift_score_hist'] = (st.session_state['drift_score_hist'] + [float(score)])[-200:]
     st.session_state['evpt_hist'] = (st.session_state['evpt_hist'] + [float(evpt) if np.isfinite(evpt) else np.nan])[-200:]
+    # θ内訳の履歴を保存（時系列モニタ用）
+    try:
+        br_row = {
+            'time': pd.Timestamp(last_ts),
+            'final': float(theta_final),
+            'base': float(br.get('base', float('nan'))),
+            'session_used': float(br.get('session_used', float('nan'))),
+            'session_bump': float(br.get('session_bump', float('nan'))),
+            'drift_bump': float(br.get('drift_bump', float('nan'))),
+            'news_bump': float(br.get('news_bump', float('nan'))),
+            'min': float(br.get('min', float('nan'))),
+            'max': float(br.get('max', float('nan'))),
+            'in_news': bool(br.get('in_news', False)),
+        }
+        st.session_state['theta_breakdown_hist'] = (st.session_state['theta_breakdown_hist'] + [br_row])[-200:]
+    except Exception:
+        pass
 
     st.markdown("### 運用サマリ")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -695,6 +628,120 @@ def render_meta_summary(df: pd.DataFrame, windows_df: pd.DataFrame, meta: dict):
     with c2:
         st.metric("θ 最終", f"{theta_final:.3f}")
         st.caption(f"base {br['base']:.3f} / sess {br['session_used']:.3f} / drift +{br['drift_bump']:.2f} / news +{br['news_bump']:.2f}")
+        # θ 内訳のポップオーバー（popover がない環境では expander）
+        try:
+            pop = getattr(st, 'popover', None)
+            container_ctx = pop("θ 内訳") if callable(pop) else st.expander("θ 内訳", expanded=False)
+        except Exception:
+            container_ctx = st.expander("θ 内訳", expanded=False)
+        with container_ctx:
+            try:
+                # ラベル定義（ツールチップ代替の短い説明）
+                defs = {
+                    'base': '基準θ（設定のベース値）',
+                    'session_used': '現在セッションで使用中のθ（セッション補正後）',
+                    'session_bump': 'セッションによる増減分（session_used - base）',
+                    'drift_bump': 'ドリフト時の上乗せ（有効時のみ）',
+                    'news_bump': 'ニュース抑制下の上乗せ（ソフト抑制時）',
+                    'min': 'クリップ下限（下回る場合は繰り上げ）',
+                    'max': 'クリップ上限（上回る場合は繰り下げ）',
+                    'final': '最終θ（全補正・クリップ適用後）',
+                    'in_news': '現在がニュース抑制ウィンドウ内か',
+                }
+                br_table = {
+                    "項目": [
+                        "base", "session_used", "session_bump", "drift_bump", "news_bump", "min", "max", "final", "in_news"
+                    ],
+                    "値": [
+                        float(br.get('base', float('nan'))),
+                        float(br.get('session_used', float('nan'))),
+                        float(br.get('session_bump', float('nan'))),
+                        float(br.get('drift_bump', float('nan'))),
+                        float(br.get('news_bump', float('nan'))),
+                        float(br.get('min', float('nan'))),
+                        float(br.get('max', float('nan'))),
+                        float(theta_final),
+                        bool(br.get('in_news', False)),
+                    ],
+                    "説明": [defs[k] for k in ["base","session_used","session_bump","drift_bump","news_bump","min","max","final","in_news"]]
+                }
+                st.table(pd.DataFrame(br_table))
+
+                # 直近N本の内訳推移（簡易折れ線）
+                hist = st.session_state.get('theta_breakdown_hist', [])
+                if len(hist) >= 2:
+                    try:
+                        import plotly.graph_objects as go
+                        N = 100
+                        seg = hist[-N:]
+                        x = list(range(len(seg)))
+                        fig = go.Figure()
+
+                        # min/max 帯（時変帯域）をシェーディング
+                        y_min_raw = [float(row.get('min', float('nan'))) for row in seg]
+                        y_max_raw = [float(row.get('max', float('nan'))) for row in seg]
+                        y_min_band = [min(a, b) if np.isfinite(a) and np.isfinite(b) else np.nan for a, b in zip(y_min_raw, y_max_raw)]
+                        y_max_band = [max(a, b) if np.isfinite(a) and np.isfinite(b) else np.nan for a, b in zip(y_min_raw, y_max_raw)]
+                        # 上側（max）→ 下側（min）に fill=tonexty で帯を作る
+                        fig.add_trace(go.Scatter(x=x, y=y_max_band, mode='lines', name='θ上限', line=dict(color='rgba(33, 158, 188, 0.0)', width=0), showlegend=False))
+                        fig.add_trace(go.Scatter(x=x, y=y_min_band, mode='lines', name='θ閾値帯', fill='tonexty', fillcolor='rgba(33, 158, 188, 0.12)', line=dict(color='rgba(33, 158, 188, 0.0)', width=0)))
+
+                        # 内訳主要シリーズ
+                        series_list = [
+                            ('final', '#577590'),
+                            ('base', '#8ecae6'),
+                            ('session_used', '#219ebc'),
+                            ('drift_bump', '#f8961e'),
+                            ('news_bump', '#e76f51'),
+                        ]
+                        y_final = None
+                        for key, color in series_list:
+                            y = [float(row.get(key, float('nan'))) for row in seg]
+                            if key == 'final':
+                                y_final = y
+                            fig.add_trace(go.Scatter(x=x, y=y, mode='lines', name=key, line=dict(color=color, width=1)))
+
+                        # クリップ点をマーカーで表示
+                        clip_tol = 1e-4
+                        clipped_min_idx = [i for i,(yf, ymin) in enumerate(zip(y_final or [], y_min_band)) if np.isfinite(yf) and np.isfinite(ymin) and (yf - ymin) <= clip_tol]
+                        clipped_max_idx = [i for i,(yf, ymax) in enumerate(zip(y_final or [], y_max_band)) if np.isfinite(yf) and np.isfinite(ymax) and (ymax - yf) <= clip_tol]
+                        if clipped_min_idx:
+                            fig.add_trace(go.Scatter(x=[x[i] for i in clipped_min_idx], y=[(y_final or [])[i] for i in clipped_min_idx], mode='markers', name='clipped_min', marker=dict(color='#e63946', size=5)))
+                        if clipped_max_idx:
+                            fig.add_trace(go.Scatter(x=[x[i] for i in clipped_max_idx], y=[(y_final or [])[i] for i in clipped_max_idx], mode='markers', name='clipped_max', marker=dict(color='#2a9d8f', size=5)))
+
+                        fig.update_layout(margin=dict(l=0,r=0,t=0,b=0), height=180,
+                                          legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # クリップ頻度（簡易表示）
+                        total_pts = sum(1 for v in (y_final or []) if np.isfinite(v))
+                        clip_cnt = len(clipped_min_idx) + len(clipped_max_idx)
+                        if total_pts > 0 and clip_cnt > 0:
+                            st.caption(f"クリップ率: {clip_cnt/total_pts*100:.1f}%（min {len(clipped_min_idx)} / max {len(clipped_max_idx)}）")
+
+                        # 軽い異常検知バッジ
+                        alerts = []
+                        # final の急変
+                        if y_final and len(y_final) >= 2 and np.isfinite(y_final[-1]) and np.isfinite(y_final[-2]):
+                            jump = float(abs(y_final[-1] - y_final[-2]))
+                            if jump >= 0.08:
+                                sgn = '+' if (y_final[-1] - y_final[-2]) > 0 else '−'
+                                alerts.append(f"θが直近で急変（{sgn}{jump:.3f}）")
+                        # drift_bump の継続上昇
+                        y_drift = [float(row.get('drift_bump', float('nan'))) for row in seg]
+                        if len(y_drift) >= 6:
+                            tail = y_drift[-6:]
+                            if all(np.isfinite(v) and v > 0 for v in tail):
+                                diffs = [tail[i+1]-tail[i] for i in range(len(tail)-1) if np.isfinite(tail[i+1]) and np.isfinite(tail[i])]
+                                if sum(d for d in diffs if d > 0) >= 0.02:
+                                    alerts.append("drift_bump が継続上昇中")
+                        if alerts:
+                            st.caption(" / ".join([f"⚠️ {a}" for a in alerts]))
+                    except Exception as _:
+                        st.caption("履歴チャートは利用不可（plotly未インストール等）")
+            except Exception as e:
+                st.write(f"内訳表示で問題が発生: {e}")
     with c3:
         st.metric("ニュース", "抑制中" if in_news else "通常")
         st.caption(f"LRU {ns.get('size',0)} / H {ns.get('hits',0)} / M {ns.get('miss',0)}")
@@ -3174,20 +3221,10 @@ if news_file is not None:
         st.info("本日の主要イベントはありません（またはCSVの日時を解釈できませんでした）")
 
 # ---- 重要度別ウィンドウ生成 & 赤影描画ユーティリティ ----
+@st.cache_data(show_spinner=False, ttl=300)
 def build_event_windows(events_df: pd.DataFrame, imp_threshold: int, mapping: dict[int,int]) -> pd.DataFrame:
-    if events_df.empty:
-        return pd.DataFrame(columns=["start","end","importance","title"])
-    rows=[]
-    for _, r in events_df.iterrows():
-        imp = int(r["importance"])
-        if imp < imp_threshold: 
-            continue
-        minutes = mapping.get(imp, 0)
-        start = r["time"] - timedelta(minutes=minutes)
-        end   = r["time"] + timedelta(minutes=minutes)
-        rows.append({"start": start, "end": end, "importance": imp, "title": r.get("title", "")})
-    windows = pd.DataFrame(rows)
-    return windows.sort_values("start").reset_index(drop=True)
+    from utils.app_core import build_event_windows_pure
+    return build_event_windows_pure(events_df, imp_threshold, mapping)
 
 def is_suppressed(ts: pd.Timestamp, windows_df: pd.DataFrame) -> bool:
     if windows_df.empty: return False
