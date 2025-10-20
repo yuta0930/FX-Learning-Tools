@@ -31,6 +31,12 @@ def init_session_state():
     st.session_state.setdefault('use_adaptive_theta', False)
     st.session_state.setdefault('theta_drift_bump_active', False)
     st.session_state.setdefault('theta_bump_drift', 0.03)
+    # 新モジュールの有効化トグル（後方互換のため既定OFF/一部ON）
+    st.session_state.setdefault('enable_regime', True)
+    st.session_state.setdefault('enable_calibration', True)  # 校正モデルがあれば自動適用
+    st.session_state.setdefault('enable_execution', False)
+    st.session_state.setdefault('enable_risk', False)
+    st.session_state.setdefault('enable_trade_logging', True)
 
 init_session_state()
 
@@ -162,8 +168,33 @@ if "enable_trading" not in st.session_state:
 # ---- Risk Guard 初期化（最初の1回だけ） ----
 if "trade_guard" not in st.session_state:
     try:
-        cfg = get_config().risk_guard
-        st.session_state.trade_guard = make_guard_from_config(cfg)
+        cfg_root = get_config()
+        # まず属性アクセスを試みる（_Node を想定）
+        try:
+            cfg_rg = cfg_root.risk_guard  # _Node ならこれで取得可
+        except Exception:
+            cfg_rg = None
+        # 無い場合はデフォルト、dict の場合は NS に変換
+        from types import SimpleNamespace as _NS
+        from risk_guard import RiskConfig as _RG
+        if cfg_rg is None:
+            _d = _RG()
+            cfg_rg = _NS(
+                max_trades_per_day=_d.max_trades_per_day,
+                max_trades_per_session=_d.max_trades_per_session,
+                max_consecutive_losses=_d.max_consecutive_losses,
+                cooldown_minutes=_d.cooldown_minutes,
+                atr_spike_window=_d.atr_spike_window,
+                atr_spike_zscore=_d.atr_spike_zscore,
+                daily_reset_hour_utc=_d.daily_reset_hour_utc,
+                enable_atr_guard=_d.enable_atr_guard,
+                enable_session_limits=_d.enable_session_limits,
+                enable_cooldown=_d.enable_cooldown,
+                atr_period=_d.atr_period,
+            )
+        elif isinstance(cfg_rg, dict):
+            cfg_rg = _NS(**cfg_rg)
+        st.session_state.trade_guard = make_guard_from_config(cfg_rg)
     except Exception as e:
         st.session_state.trade_guard = None
         st.warning(f"Risk guard 初期化失敗: {e}")
@@ -182,7 +213,101 @@ with col2:
     except Exception:
         ev = float("nan")
     st.metric("EV per trade", f"{ev:.4f}" if ev == ev else "N/A")  # NaN対応
+with st.expander("モジュール設定（レジーム/校正/執行/リスク/ログ）", expanded=False):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.toggle("Regime", key="enable_regime", help="レジーム判定を有効化（フィルタ等で使用）")
+    with c2:
+        st.toggle("Calibration", key="enable_calibration", help="校正済みモデルが存在すれば自動適用")
+    with c3:
+        st.toggle("Execution", key="enable_execution", help="スリッページ/クールダウン等を適用（バックテスト/シミュレーション向け）")
+    with c4:
+        st.toggle("Risk", key="enable_risk", help="日次損失枠/DDゲート/動的サイズ配分の適用")
+    with c5:
+        st.toggle("Trade logs", key="enable_trade_logging", help="1トレード=1レコードのParquet/JSONL保存")
+
+    # ロガーの初期化（必要時のみ、失敗はソフトフェイル）
+    try:
+        from config.loader import get_config as _get_cfg_for_log
+        if st.session_state.get('enable_trade_logging') and ('trade_logger' not in st.session_state):
+            from src.monitoring.logs import Logger as _Logger
+            cfg0 = _get_cfg_for_log()
+            st.session_state['trade_logger'] = _Logger(cfg0.paths.logs_dir, parquet=bool(cfg0.logging.parquet), jsonl=bool(cfg0.logging.jsonl))
+    except Exception as _e:
+        logger.warning("logger init failed: %s", _e)
 ## （移設）Risk Guard と ニュースキャッシュはドリフト監視の直後に表示
+    # --- バックテストサマリ（WF集計JSON/エクイティ画像） ---
+    try:
+        import os, json as _json
+        from config.loader import get_config as _get_cfg_for_wf
+        _cfg = _get_cfg_for_wf()
+        rep_dir = str(getattr(_cfg.paths, 'reports_dir', 'reports'))
+        rep_json = os.path.join(rep_dir, 'wf_report.json')
+        rep_img = os.path.join(rep_dir, 'equity_wf.png')
+        if os.path.exists(rep_json):
+            with st.expander("バックテストサマリ (WF)", expanded=False):
+                try:
+                    with open(rep_json, 'r', encoding='utf-8') as f:
+                        rep = _json.load(f)
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.markdown("**確率メトリクス**")
+                        st.json(rep.get('prob', {}))
+                        st.markdown("**取引メトリクス**")
+                        st.json(rep.get('trade', {}))
+                    with col_b:
+                        if os.path.exists(rep_img):
+                            st.image(rep_img, caption='Equity (WF aggregated)')
+                    # --- 追加: 窓ごとのメトリクス推移をミニチャートで表示 ---
+                    try:
+                        pw = rep.get('prob_by_window') or []
+                        if pw:
+                            # DataFrame化（base/cal の Brier/ECE）
+                            import pandas as _pd
+                            rows = []
+                            for i, w in enumerate(pw):
+                                base = w.get('base') or {}
+                                cal = w.get('cal') or {}
+                                rows.append({
+                                    'i': i,
+                                    'start': w.get('start'),
+                                    'end': w.get('end'),
+                                    'Brier_base': base.get('Brier'),
+                                    'ECE_base': base.get('ECE'),
+                                    'Brier_cal': cal.get('Brier') if cal else None,
+                                    'ECE_cal': cal.get('ECE') if cal else None,
+                                })
+                            df_pw = _pd.DataFrame(rows)
+                            st.markdown("**WF per-window 推移**")
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                st.caption("Brier (lower is better)")
+                                st.line_chart(df_pw.set_index('i')[['Brier_base'] + ([ 'Brier_cal'] if 'Brier_cal' in df_pw.columns else [])])
+                            with c2:
+                                st.caption("ECE (lower is better)")
+                                st.line_chart(df_pw.set_index('i')[['ECE_base'] + ([ 'ECE_cal'] if 'ECE_cal' in df_pw.columns else [])])
+                            # 追加: 勝率（Hit）の推移
+                            try:
+                                rows_hit = []
+                                for i, w in enumerate(pw):
+                                    base = w.get('base') or {}
+                                    cal = w.get('cal') or {}
+                                    rows_hit.append({
+                                        'i': i,
+                                        'Hit_base': base.get('Hit'),
+                                        'Hit_cal': cal.get('Hit') if cal else None,
+                                    })
+                                df_hit = _pd.DataFrame(rows_hit)
+                                st.caption("Hit (higher is better)")
+                                st.line_chart(df_hit.set_index('i')[['Hit_base'] + ([ 'Hit_cal'] if 'Hit_cal' in df_hit.columns else [])])
+                            except Exception:
+                                pass
+                    except Exception as _e:
+                        st.info(f"WF推移チャートの描画をスキップ: {_e}")
+                except Exception as _e:
+                    st.warning(f"WFレポートの読み込みに失敗: {_e}")
+    except Exception as _e:
+        logger.debug("wf summary skip: %s", _e)
 # --- セッション別カバレッジ確認用（UI/検証タブ等で利用） ---
 # pred_dfに[session, signal]列がある前提
 # 例: cov_by_sess = pred_df.groupby("session")["signal"].mean()

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import pandas as pd
 import pytz
+from zoneinfo import ZoneInfo
 from typing import Union
 
-JST = pytz.timezone("Asia/Tokyo")
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def ensure_tzaware(ts: pd.Timestamp, tz=pytz.UTC) -> pd.Timestamp:

@@ -1,0 +1,62 @@
+general:
+  symbol: "USDJPY"
+  timeframe: "15m"
+  tz: "Asia/Tokyo"
+  seed: 42
+paths:
+  models_dir: "models"
+  logs_dir: "logs"
+  data_dir: "data"
+  reports_dir: "reports"
+regime:
+  method: "hybrid"        # "rule", "kmeans", "hybrid"
+  k: 4                    # kmeansクラスタ数
+  atr_window: 14
+  rv_window: 30
+  spread_proxy: "hl_over_close"  # high-low比を近似スプレッド指標に
+  session_dummies: true
+  event_csv: null         # 経済指標CSV（省略可）
+calibration:
+  enabled: true
+  method: "isotonic"      # "isotonic" or "sigmoid"
+  cv: "prefit"            # 既存joblibモデルに対するCalibratedClassifierCV用
+execution:
+  slippage_alpha: 0.35    # 平均スリッページ=spread*alpha
+  slippage_beta: 0.25     # 分散スリッページ=spread*beta + vol補正
+  max_retry: 2
+  cool_down_bars: 2       # 直近約定後のクールダウン本数
+  allowed_regimes: ["HV_HLQ","HV","NV"]  # 取引可レジーム名
+risk:
+  daily_loss_limit_pct: 0.03   # 日次損失枠3%
+  max_drawdown_pct: 0.10       # 通算DD上限10%で縮小/停止
+  kelly_cap: 0.25              # ケリー上限25%
+  base_risk_per_trade_pct: 0.5 # 0.5%基準（ATR距離等で換算）
+  reduce_on_dd: true
+backtest:
+  wf_window_days: 60
+  wf_step_days: 15
+  metrics: ["Sharpe","PF","Hit","MaxDD","Brier","ECE"]
+logging:
+  parquet: true
+  jsonl: true
+  keep_raw_probs: true
+quality:
+  ap_min_multiplier: 1.15   # POS比率×倍率の最低AP
+  ap_min_floor: 0.02        # APの下限（絶対値）
+  brier_max: 0.30           # Brier の上限（これを超えると却下）
+  coverage_warn_min: 0.01   # 閾値時のカバレッジ警告ライン（保存抑止はしない）
+cost_sensitivity:
+  # EV のコスト感度分析で用いるコスト候補（片道/約定あたり等、モデルの想定に合わせて解釈）
+  costs: [0.05, 0.10, 0.15, 0.20]
+risk_guard:
+  max_trades_per_day: 40
+  max_trades_per_session: 20
+  max_consecutive_losses: 6
+  cooldown_minutes: 60
+  atr_spike_window: 20
+  atr_spike_zscore: 3.0
+  daily_reset_hour_utc: 0
+  enable_atr_guard: true
+  enable_session_limits: true
+  enable_cooldown: true
+  atr_period: 14

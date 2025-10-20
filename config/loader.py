@@ -18,7 +18,16 @@ except ModuleNotFoundError as e:  # 明示的ガードでユーザーに指示
     raise ModuleNotFoundError("PyYAML が未インストールです。`pip install PyYAML` を実行してください。") from e
 from typing import Any, Mapping
 
-_DEFAULT_PATH = os.environ.get("FX_CFG", "config/training.yaml")
+"""後方互換: config/config.yml があれば優先、無ければ従来の training.yaml を読む。
+
+優先順:
+1) 環境変数 FX_CFG
+2) config/config.yml
+3) config/training.yaml
+"""
+_DEFAULT_PATH = os.environ.get("FX_CFG") or (
+    "config/config.yml" if os.path.exists("config/config.yml") else "config/training.yaml"
+)
 
 class _Node:
     def __init__(self, data: Any):

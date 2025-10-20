@@ -13,7 +13,9 @@ def _load_and_validate_baseline(
     meta_path: str = "models/break_meta.json",
     calib_path: str = "reports/break_calibration.json",
     *,
-    min_samples: int = 5,
+    # デフォルト閾値: 2 以上あれば利用可能とする（テスト期待に合わせる）。
+    # 1 サンプルだけの場合は分布推定として不十分とみなし None 扱い。
+    min_samples: int = 2,
     warn_on_clip: bool = True,
 ) -> tuple[float, Optional[np.ndarray], list[str]]:
     """

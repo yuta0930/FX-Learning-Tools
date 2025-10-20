@@ -62,3 +62,4 @@ ruff==0.6.9
 black==24.8.0
 PyYAML==6.0.2
 shap==0.46.0
+pyarrow==17.0.0

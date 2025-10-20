@@ -26,6 +26,68 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "build"
+		},
+		{
+			"label": "Run tests",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run fast tests",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q",
+				"-k",
+				"app_smoke or risk_guard or metrics_smoke or baseline_loader or ev_utils or time_utils"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run full tests (background)",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": true,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run all tests now",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
 		}
 	]
 }

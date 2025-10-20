@@ -5,6 +5,7 @@ import joblib
 import sys
 from model_wrappers import TemperatureScaledModel as _TempModel  # ensure module is importable for pickle
 import json
+import os
 
 def load_break_model(model_path="models/break_model.joblib"):
     """Load trained model with backward-compat for legacy pickles.
@@ -17,6 +18,11 @@ def load_break_model(model_path="models/break_model.joblib"):
     main_mod = sys.modules.get("__main__")
     if main_mod is not None and not hasattr(main_mod, "_TemperatureScaledModel"):
         setattr(main_mod, "_TemperatureScaledModel", _TempModel)
+    # Prefer calibrated model if exists and not explicitly overridden
+    if model_path == "models/break_model.joblib":
+        cal_path = "models/break_model_calibrated.joblib"
+        if os.path.exists(cal_path):
+            model_path = cal_path
     pkg = joblib.load(model_path)
     model = pkg["model"]
     use_cols = pkg.get("use_cols") or pkg.get("Xcols")  # 互換
