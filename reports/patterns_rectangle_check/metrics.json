@@ -1,0 +1,28 @@
+{
+  "pattern": "rectangle",
+  "H": 12,
+  "delta_mult": 0.6,
+  "spread_pips": 0.5,
+  "n_rows": 5666,
+  "n_signals": 1,
+  "hit_rate": 0.0,
+  "ev_R": -1.1249086267115949,
+  "baseline_up": 0.5294533875818149,
+  "baseline_down": 0.467893154077481,
+  "uplift_long_vs_up": NaN,
+  "uplift_short_vs_down": 0.0,
+  "stage_counts": {
+    "detected_raw": 1,
+    "after_session_allow": 1,
+    "before_session_allow": 1,
+    "after_session_overrides": 1,
+    "before_session_overrides": 1
+  },
+  "verdict": "Needs Fix",
+  "hit_rate_ci": {
+    "lo": 0.0,
+    "hi": 0.7934567085261071,
+    "n": 1
+  },
+  "ev_curve_best": null
+}

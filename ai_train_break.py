@@ -271,6 +271,25 @@ def fit_with_safe_calibration(Xtr: np.ndarray, ytr: np.ndarray):
 # ============================================================
 # 診断・θ探索・セッション別θ
 # ============================================================
+_TS_DEFAULTS = {
+    "min_cov": 0.05,
+    "target_cov": 0.10,
+    "session_min_cov_default": 0.05,
+    "session_target_cov_default": 0.10,
+    "session_tokyo_min_cov": 0.03,
+    "session_tokyo_target_cov": 0.07,
+}
+
+def _get_ts_value(cfg, key: str, default_key: str) -> float:
+    """threshold_search セクションから値を取得（なければ安全な既定値）。
+    config/config.yml には存在しない可能性があるため、AttributeError 時は
+    training.yaml の既定を模したデフォルトでフォールバックする。
+    """
+    try:
+        ts = getattr(cfg, 'threshold_search')
+        return float(getattr(ts, key))
+    except Exception:
+        return float(_TS_DEFAULTS[default_key])
 def quick_diagnose(df: pd.DataFrame, Xcols: List[str], y: np.ndarray):
     pos_ratio = float(np.mean(y))
     print(f"[diag] total pos_ratio={pos_ratio:.3f}  samples={len(y)}")
@@ -291,9 +310,9 @@ def search_best_theta(proba, ev, min_cov=None, target_cov=None):
     """
     cfg = get_config()
     if min_cov is None:
-        min_cov = cfg.threshold_search.min_cov
+        min_cov = _get_ts_value(cfg, 'min_cov', 'min_cov')
     if target_cov is None:
-        target_cov = cfg.threshold_search.target_cov
+        target_cov = _get_ts_value(cfg, 'target_cov', 'target_cov')
     # --- 1) p_break-even を下限に ---
     p_be = (ev.R_loss + ev.cost_per_trade) / (ev.R_win + ev.R_loss)
     print(f"[θ-guard] break-even p >= {p_be:.3f} -> θ grid starts at ~{max(0.50, p_be-0.02):.3f}")
@@ -341,9 +360,9 @@ def best_theta_by_session(df: pd.DataFrame, proba: np.ndarray, ev: EVConfig,
     cfg = get_config()
     # デフォルト値（セッション別用）
     if min_cov is None:
-        min_cov = cfg.threshold_search.session_min_cov_default
+        min_cov = _get_ts_value(cfg, 'session_min_cov_default', 'session_min_cov_default')
     if target_cov is None:
-        target_cov = cfg.threshold_search.session_target_cov_default
+        target_cov = _get_ts_value(cfg, 'session_target_cov_default', 'session_target_cov_default')
     if all(c in df.columns for c in ["tokyo", "london", "ny"]):
         masks = {
             "Tokyo": (df["tokyo"] > 0.5).values,
@@ -364,8 +383,13 @@ def best_theta_by_session(df: pd.DataFrame, proba: np.ndarray, ev: EVConfig,
             continue
         # 東京市場は独自設定（configに存在すれば使用、無ければ fallback）
         if name == "Tokyo":
-            mc = getattr(cfg.threshold_search, 'session_tokyo_min_cov', min_cov)
-            tc = getattr(cfg.threshold_search, 'session_tokyo_target_cov', target_cov)
+            try:
+                ts = getattr(cfg, 'threshold_search')
+                mc = getattr(ts, 'session_tokyo_min_cov', min_cov)
+                tc = getattr(ts, 'session_tokyo_target_cov', target_cov)
+            except Exception:
+                mc = _TS_DEFAULTS['session_tokyo_min_cov']
+                tc = _TS_DEFAULTS['session_tokyo_target_cov']
         else:
             mc, tc = min_cov, target_cov
         out[name] = search_best_theta(proba[idx], ev, min_cov=mc, target_cov=tc)

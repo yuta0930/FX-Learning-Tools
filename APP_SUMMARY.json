@@ -1,0 +1,86 @@
+{
+  "name": "FX-Learning-Tools",
+  "stack": {
+    "frontend": ["Streamlit 1.41"],
+    "backend": ["Python 3.11", "pandas 2.3", "scikit-learn 1.7", "NumPy 2.3"],
+    "infrastructure": ["Local", "CSV/Parquet/JSONL", "Joblib models", "YAML config"]
+  },
+  "framework_versions": {
+    "python": "3.11",
+    "streamlit": "1.41.1",
+    "pandas": "2.3.1",
+    "numpy": "2.3.2",
+    "scikit-learn": "1.7.1",
+    "pytest": "8.3.3",
+    "ruff": "0.6.9",
+    "black": "24.8.0"
+  },
+  "routes": [],
+  "models": [
+    {
+      "name": "BreakModelMeta",
+      "fields": [
+        {"name": "threshold", "type": "number", "pk": false, "index": false},
+        {"name": "ev_per_trade", "type": "number", "pk": false, "index": false},
+        {"name": "coverage_at_threshold", "type": "number", "pk": false, "index": false},
+        {"name": "ev_cfg", "type": "object", "pk": false, "index": false},
+        {"name": "theta_by_session", "type": "object", "pk": false, "index": false}
+      ],
+      "storage": "models/break_meta.json"
+    },
+    {
+      "name": "BreakModel",
+      "fields": [
+        {"name": "sklearn_estimator", "type": "joblib", "pk": false, "index": false}
+      ],
+      "storage": "models/break_model.joblib"
+    }
+  ],
+  "external_integrations": ["OpenAI API", "OANDA REST API", "yfinance"],
+  "security": {
+    "auth": "none (local UI)",
+    "rate_limit": "n/a",
+    "csp": "n/a",
+    "secret_handling": "Environment variables / .env (e.g., OPENAI_API_KEY, OANDA_TOKEN, OANDA_ACCOUNT)"
+  },
+  "performance": {
+    "ssr": "n/a (Streamlit)",
+    "caching": "Streamlit session_state and lightweight memoization; no global cache layer",
+    "images": "n/a",
+    "known_hotspots": [
+      "Large app.py re-runs on state changes",
+      "External API latency (news/OANDA/OpenAI)",
+      "Loading large CSV datasets into memory"
+    ]
+  },
+  "a11y_i18n": {
+    "a11y": "Streamlit defaults; limited ARIA/keyboard control",
+    "i18n": "Japanese-first UI; no multi-language framework",
+    "timezone": "Asia/Tokyo"
+  },
+  "observability": {
+    "logging": "Python logging (fx.app); trade logs to JSONL/Parquet via src/monitoring/logs.py",
+    "metrics": "Brier/ECE in src/monitoring/metrics.py; drift (PSI/KL/JS/Hellinger) in monitoring.py",
+    "tracing": "none"
+  },
+  "testing": {
+    "unit": "pytest-based unit tests (risk guard, app small units)",
+    "e2e": "none",
+    "coverage_estimate": "unknown"
+  },
+  "deploy": {
+    "envs": ["dev"],
+    "ci": "none",
+    "container": "none"
+  },
+  "known_issues": [
+    "Monolithic app.py complicates maintenance and performance",
+    "No server-side auth/authorization (local-only assumption)",
+    "No database; long-term analytics limited to files"
+  ],
+  "open_questions": [
+    "What is the target production topology (local/desktop vs shared server vs cloud)?",
+    "Will OANDA trading be enabled in production and how will secrets/approvals be managed?",
+    "What is the release cadence for model retraining and calibration?"
+  ]
+}

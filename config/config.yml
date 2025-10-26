@@ -20,6 +20,8 @@ calibration:
   enabled: true
   method: "isotonic"      # "isotonic" or "sigmoid"
   cv: "prefit"            # 既存joblibモデルに対するCalibratedClassifierCV用
+  # 追加: 直近ウィンドウ割合の候補（isotonic等で最近データに重み付けしたい場合）
+  recent_frac_list: [0.3, 0.4, 0.5]
 execution:
   slippage_alpha: 0.35    # 平均スリッページ=spread*alpha
   slippage_beta: 0.25     # 分散スリッページ=spread*beta + vol補正
@@ -48,6 +50,15 @@ quality:
 cost_sensitivity:
   # EV のコスト感度分析で用いるコスト候補（片道/約定あたり等、モデルの想定に合わせて解釈）
   costs: [0.05, 0.10, 0.15, 0.20]
+
+# 追加: しきい値探索の既定（training.yaml と整合させ中央集権化）
+threshold_search:
+  min_cov: 0.05                 # 共通最小カバレッジ
+  target_cov: 0.10              # 目標カバレッジ（バランス最適化）
+  session_min_cov_default: 0.05
+  session_target_cov_default: 0.10
+  session_tokyo_min_cov: 0.03
+  session_tokyo_target_cov: 0.07
 risk_guard:
   max_trades_per_day: 40
   max_trades_per_session: 20

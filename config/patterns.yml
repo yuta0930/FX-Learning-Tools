@@ -1,0 +1,43 @@
+# Parameters for pattern evaluation (optional; scripts/eval_patterns.py accepts CLI args)
+# You can override these via command-line flags.
+H: 8
+delta_mult: 0.5
+spread_pips: 0.5
+pip_size: 0.01
+
+flag_pennant:
+  lookback: 1000
+  n_push: 30
+  min_flag_bars: 8
+  max_flag_bars: 40
+  sigma_k: 1.2
+  pole_min_atr: 3.0
+  # New thresholds (stricter defaults for higher precision)
+  flag_slope_max_atr: 0.10   # slope normalized by ATR
+  contraction_percentile: 0.15 # window range within lower 15% of historical distribution
+
+# --- New (No-Op by default unless used by scripts/eval_patterns_tri_rec_asia.py) ---
+triangle:
+  lookback: 1000           # 探索範囲（バー数）
+  min_bars: 12             # 三角形の最小バー数（やや厳しめに）
+  max_bars: 60             # 三角形の最大バー数
+  converge_ratio_max: 0.35 # 上辺と下辺の間隔が初期に比べてどれだけ収束したか（小さいほど良い）
+  slope_same_sign_forbid: true  # 上下の回帰スロープが同符号は除外
+  breakout_sigma_k: 1.4    # 回帰帯からのブレイク幅（σ倍・精度優先）
+
+rectangle:
+  lookback: 1000
+  min_bars: 10
+  max_bars: 80
+  max_range_atr_mult: 2.5  # ボックスの高さ <= ATR*この倍率（やや緩め）
+  min_touches: 2           # 上下にそれぞれのタッチ回数の目安（検出率重視）
+  breakout_buffer_pips: 0.02  # ブレイク判定のバッファ（USDJPYで0.01=1pip）
+
+asia_box:
+  # JST 9:00-17:00 相当（UTC 0:00-8:59）をデフォルトの箱対象とする
+  start_hour_utc: 0
+  end_hour_utc: 9         # endは非包含上限（0<=h<9）扱い
+  min_range_atr_mult: 0.4  # 小さすぎる箱は除外（ATR倍率）
+  max_range_atr_mult: 4.0  # 大きすぎる箱は除外（検出率重視）
+  breakout_buffer_pips: 0.01
+  check_after_hours: 10     # 箱確定後、最大何時間内のブレイクを見るか（15mなら40本）

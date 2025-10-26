@@ -205,3 +205,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# --- Project specific additions ---
+# Keep example env, ignore real env
+!.env.example
+
+# Local data/logs/artifacts
+/data/
+/logs/*
+/reports/monthly_/
+!/data/.gitkeep
+!/logs/.gitkeep
+
+# Streamlit local state
+.streamlit/
+
+# OS files
+.DS_Store
+Thumbs.db

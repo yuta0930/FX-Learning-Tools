@@ -1,0 +1,5 @@
+# Overrideable session windows in JST (inclusive hours)
+# If missing, built-in defaults are used.
+Tokyo: [9, 15]
+London: [16, 20]
+NewYork: [21, 5]

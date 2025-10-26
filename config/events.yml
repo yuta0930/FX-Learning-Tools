@@ -1,0 +1,16 @@
+events:
+  - title: "FOMC"
+    date: "2025-10-29"
+    time: "03:00"
+    importance: high
+    tz: "Asia/Tokyo"
+  - title: "日本 CPI"
+    date: "2025-10-25"
+    time: "08:30"
+    importance: high
+    tz: "Asia/Tokyo"
+  - title: "米雇用統計"
+    date: "2025-11-07"
+    time: "21:30"
+    importance: high
+    tz: "Asia/Tokyo"

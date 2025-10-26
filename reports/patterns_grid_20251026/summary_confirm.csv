@@ -1,0 +1,4 @@
+H,delta_mult,session,EV_net,ev_R_baseline,ev_R_htf,uplift_pct,n_pass_htf,hit_rate,evcurve_q,evcurve_quality_thr,evcurve_n,evcurve_EV_net,out_dir
+8,0.4,London,0.8657003732180737,,,,,1.0,,,,,reports\patterns_grid_20251026\confirm_H8_dm0.4_London
+8,0.45,London,0.8657003732180737,,,,,1.0,,,,,reports\patterns_grid_20251026\confirm_H8_dm0.45_London
+8,0.5,London,0.8657003732180737,,,,,1.0,,,,,reports\patterns_grid_20251026\confirm_H8_dm0.5_London

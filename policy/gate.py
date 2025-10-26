@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import Optional, Mapping
 import pandas as pd
 import numpy as np
+from src.policy.df_guard import enforce_env_guard_df
+from src.policy.reasons import unify_reasons_df
 
 
 def apply_final_gate(
@@ -89,4 +91,8 @@ def apply_final_gate(
         if apply_news_filter:
             df_out["gate_news_block"] = news_block if isinstance(news_block, (pd.Series, np.ndarray)) else bool(news_block)
 
+    # 最終的に環境ガードを適用（MODE/KILL_SWITCH により強制停止）
+    df_out = enforce_env_guard_df(df_out)
+    # 理由列を統一（reason）しつつ、元列は温存
+    df_out = unify_reasons_df(df_out)
     return df_out

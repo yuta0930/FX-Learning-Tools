@@ -1,0 +1,28 @@
+{
+  "pattern": "asia_box",
+  "H": 12,
+  "delta_mult": 0.75,
+  "spread_pips": 0.5,
+  "n_rows": 5666,
+  "n_signals": 1,
+  "hit_rate": 1.0,
+  "ev_R": 0.8657003732180737,
+  "baseline_up": 0.5099946930833186,
+  "baseline_down": 0.4788607818857244,
+  "uplift_long_vs_up": 1.9608047173083594,
+  "uplift_short_vs_down": NaN,
+  "stage_counts": {
+    "detected_raw": 1,
+    "after_session_allow": 1,
+    "before_session_allow": 1,
+    "after_session_overrides": 1,
+    "before_session_overrides": 1
+  },
+  "verdict": "OK",
+  "hit_rate_ci": {
+    "lo": 0.20654329147389294,
+    "hi": 1.0,
+    "n": 1
+  },
+  "ev_curve_best": null
+}

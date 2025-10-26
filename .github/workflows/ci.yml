@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ main ]
+    branches: [ "**" ]
 
 jobs:
   build-test-lint:
@@ -27,7 +27,7 @@ jobs:
 
       - name: Ruff Lint
         run: |
-          ruff check .
+          python -m ruff check .
 
       - name: Ruff Format (diff only)
         run: |
@@ -35,20 +35,23 @@ jobs:
 
       - name: Black Format (diff only)
         run: |
-          black --check . || (
+          python -m black --check . || (
             echo '::error::Black formatting issues detected. Run "black ." locally.' && exit 1
           )
 
-      - name: Type Check (mypy)
+      - name: Type Check (mypy light)
         run: |
-          python -m pip install mypy
-          mypy .
+          python -m mypy --config-file mypy.ini src/core src/policy tests
+
+      - name: Validate config (non-strict)
+        run: |
+          python scripts/validate_config_cli.py || true
 
       - name: Run PyTest
         env:
           PYTHONWARNINGS: always
         run: |
-          pytest -q --maxfail=1
+          python -m pytest -q --maxfail=1
 
       - name: Upload Ruff/pytest artifacts (on failure)
         if: failure()

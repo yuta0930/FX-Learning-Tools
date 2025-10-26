@@ -1,0 +1,44 @@
+# Session-specific overrides for pattern thresholds (optional)
+# Keys mirror config/patterns.yml entries under flag_pennant.
+# Any value here will override the default ONLY at evaluation-time filtering stage.
+
+Tokyo:
+  flag_slope_max_atr: 0.08
+  contraction_percentile: 0.12  # tighter contraction expected in Tokyo
+
+London:
+  flag_slope_max_atr: 0.12
+  contraction_percentile: 0.18
+
+NewYork:
+  flag_slope_max_atr: 0.10
+  contraction_percentile: 0.15
+
+# --- New nested overrides for the additional patterns (used only by new scripts) ---
+# セッション別に triangle/rectangle/asia_box の上書きを必要に応じて設定できます。
+# 未設定なら完全No-Op。
+Overrides:
+  Tokyo:
+    triangle:
+      converge_ratio_max: 0.35
+    rectangle:
+      max_range_atr_mult: 1.8
+    asia_box:
+      min_range_atr_mult: 0.8
+      max_range_atr_mult: 2.5
+  London:
+    triangle:
+      converge_ratio_max: 0.45
+    rectangle:
+      max_range_atr_mult: 2.2
+    asia_box:
+      min_range_atr_mult: 0.6
+      max_range_atr_mult: 3.0
+  NewYork:
+    triangle:
+      converge_ratio_max: 0.40
+    rectangle:
+      max_range_atr_mult: 2.0
+    asia_box:
+      min_range_atr_mult: 0.6
+      max_range_atr_mult: 3.0

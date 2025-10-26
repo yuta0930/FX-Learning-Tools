@@ -6,6 +6,14 @@ import sys
 from model_wrappers import TemperatureScaledModel as _TempModel  # ensure module is importable for pickle
 import json
 import os
+import hashlib
+
+def _sha256_of_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 def load_break_model(model_path="models/break_model.joblib"):
     """Load trained model with backward-compat for legacy pickles.
@@ -23,11 +31,40 @@ def load_break_model(model_path="models/break_model.joblib"):
         cal_path = "models/break_model_calibrated.joblib"
         if os.path.exists(cal_path):
             model_path = cal_path
+    # Optional signature verification (soft by default)
+    meta_path = "models/break_meta.json"
+    meta_sig = None
+    try:
+        if os.path.exists(meta_path):
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta_sig = json.load(f)
+    except Exception:
+        meta_sig = None
+    # Load model
     pkg = joblib.load(model_path)
     model = pkg["model"]
     use_cols = pkg.get("use_cols") or pkg.get("Xcols")  # 互換
     if use_cols is None:
         raise RuntimeError("models/break_model.joblib に use_cols/Xcols が見当たりません")
+    # Verify signature if available
+    try:
+        strict = str(os.getenv("STRICT_MODEL_SIGNATURE", "0")).lower() in {"1","true","yes","y"}
+        current_hash = _sha256_of_file(model_path)
+        expected = None
+        if isinstance(meta_sig, dict):
+            expected = meta_sig.get("model_sha256")
+        if expected and expected != current_hash:
+            msg = f"Model signature mismatch: expected {expected[:8]}..., got {current_hash[:8]}..."
+            if strict:
+                raise RuntimeError(msg)
+            else:
+                print(f"[warn] {msg}")
+    except Exception as _e:
+        # Only warn on verification issues unless strict
+        if str(os.getenv("STRICT_MODEL_SIGNATURE", "0")).lower() in {"1","true","yes","y"}:
+            raise
+        else:
+            print(f"[warn] signature verification skipped: {_e}")
     return model, use_cols
 
 def load_break_meta(meta_path="models/break_meta.json"):

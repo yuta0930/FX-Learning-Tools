@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+import os
 # Centralized timezone helpers
 from utils.time_utils import JST, to_jst
 import logging
@@ -13,6 +14,24 @@ if not logger.handlers:
     _h = logging.StreamHandler()
     _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logger.addHandler(_h)
+
+# --- Config knobs (env-driven) ---
+def _int_from_env(name: str, default_val: int) -> int:
+    try:
+        return int(os.getenv(name, str(default_val)).strip())
+    except Exception:
+        return int(default_val)
+
+PRICE_FETCH_TTL = _int_from_env("PRICE_FETCH_TTL", 60)  # seconds
+EVENTS_TTL = _int_from_env("EVENTS_TTL", 300)
+MODEL_CACHE_TTL = _int_from_env("MODEL_CACHE_TTL", 600)
+DEV_PROFILING = os.getenv("DEV_PROFILING", "0").lower() in {"1", "true", "yes", "y"}
+try:
+    logger.info(
+        f"TTL knobs -> prices:{PRICE_FETCH_TTL}s events:{EVENTS_TTL}s model:{MODEL_CACHE_TTL}s"
+    )
+except Exception:
+    pass
 
 # Initialize session state once
 def init_session_state():
@@ -103,6 +122,12 @@ from monitoring import compute_psi, psi_severity, threshold_exceed_rate, healthc
 
 from build_level_break_prob_table import build_level_break_prob_table
 st.set_page_config(page_title="FX 自動ライン描画 - 完全版", page_icon="📈", layout="wide")
+# 安全バッジと ATR パネル（全画面で常時表示）
+try:
+    from src.ui.safety_badge import render_safety_badge as _render_safety_badge
+    _render_safety_badge()
+except Exception:
+    pass
 from inference_break import load_break_meta
 from config.loader import get_config
 from risk_guard import make_guard_from_config
@@ -1174,6 +1199,8 @@ def backtest_rolling(df: pd.DataFrame,
 # 黒背景・重要度別ニュースウィンドウ赤影・ソフト抑制・自動ライン/パターン/EV/ブレイク確率・手動再学習
 
 import os, math, json, subprocess, sys, pathlib, re, warnings
+import openai
+import yaml
 from datetime import timedelta
 import streamlit as st
 import pandas as pd
@@ -1385,6 +1412,124 @@ def collect_state_for_ai():
         "topk_levels": st.session_state.get("topk_levels", []),
     }
 
+# ======== ローカル簡易ナレッジ（README / config.yml の要約を数千文字以内で添付） ========
+def _build_knowledge_snippet(max_chars: int = 1200) -> str:
+    parts: list[str] = []
+    try:
+        # README の冒頭を短く
+        base = pathlib.Path(__file__).resolve().parent
+        readme = base / "README.md"
+        if readme.exists():
+            txt = readme.read_text(encoding="utf-8", errors="ignore")
+            parts.append("[README]\n" + txt.strip()[:600])
+    except Exception:
+        pass
+    try:
+        # 設定ファイルの主要キーだけテキストで
+        cfg = pathlib.Path(__file__).resolve().parent / "config" / "config.yml"
+        if cfg.exists():
+            y = yaml.safe_load(cfg.read_text(encoding="utf-8", errors="ignore"))
+            if isinstance(y, dict):
+                # 深すぎると長くなるので上位キーを抜粋
+                keys = list(y.keys())[:12]
+                dump = {k: y.get(k) for k in keys}
+                parts.append("[CONFIG]\n" + json.dumps(dump, ensure_ascii=False)[:600])
+    except Exception:
+        pass
+    blob = "\n\n".join([p for p in parts if p])
+    return blob[:max_chars]
+
+# ---- 直近状況の軽量サマリ（上位に配置：ask_copilot から参照されるため） ----
+def _build_recent_summary(n_bars_day: int = 96) -> str:
+    try:
+        # df はアプリのメイン価格DataFrame。なければCSVフォールバック。
+        df_current = globals().get('df', None)
+        if df_current is None or not isinstance(df_current, pd.DataFrame) or df_current.empty:
+            import os
+            csv_path = os.path.join("data", "USDJPY_15m.csv")
+            if os.path.exists(csv_path):
+                from src.ui.cache import file_mtime, read_csv_cached
+                m = file_mtime(csv_path)
+                tmp = read_csv_cached(csv_path, m)
+                ren = {}
+                for c in tmp.columns:
+                    lc = str(c).lower()
+                    if lc in ["timestamp","time","date"]:
+                        ren[c] = "timestamp"
+                    elif lc in ["open","high","low","close","volume"]:
+                        ren[c] = lc
+                tmp = tmp.rename(columns=ren)
+                if "timestamp" not in tmp.columns:
+                    return ""
+                tmp["timestamp"] = pd.to_datetime(tmp["timestamp"]).dt.tz_localize(None)
+                keep = [c for c in ["timestamp","open","high","low","close","volume"] if c in tmp.columns]
+                df_local = tmp[keep].copy().set_index("timestamp")
+            else:
+                return ""
+        else:
+            # DatetimeIndexを仮定
+            df_local = df_current.copy()
+            if not isinstance(df_local.index, pd.DatetimeIndex):
+                idx_name = df_local.index.name or 'index'
+                df_local = df_local.reset_index().rename(columns={idx_name:'timestamp'}).set_index('timestamp')
+            if df_local.index.tz is not None:
+                df_local.index = df_local.index.tz_convert(None)
+
+        if df_local.empty or len(df_local) < 30:
+            return ""
+
+        last_close = float(df_local["close"].iloc[-1])
+        # 直近1日程度のレンジ
+        tail = df_local.tail(max(n_bars_day, 30))
+        day_range = float(tail["high"].max() - tail["low"].min()) if {"high","low"}.issubset(tail.columns) else float('nan')
+        # ATR(14)
+        atr14 = compute_latest_atr(df_local.reset_index().rename(columns={df_local.index.name or 'timestamp':'timestamp'}), 14)
+        # レベル密度（±10pips）
+        lvls = st.session_state.get("topk_levels", [])
+        near_cnt = None
+        try:
+            if isinstance(lvls, (list, tuple)) and len(lvls) and np.isfinite(last_close):
+                w = 0.10  # 10 pips（USDJPYで0.01=1pip換算）
+                near_cnt = int(sum(1 for v in lvls if isinstance(v, (int,float)) and abs(float(v)-last_close) <= w))
+        except Exception:
+            near_cnt = None
+
+        # ニュース抑制状況
+        in_window = False
+        minutes_to = None
+        try:
+            wdf = st.session_state.get('windows_df')
+            now = pd.Timestamp.now(tz=JST).tz_convert(None)
+            if wdf is not None and not wdf.empty:
+                w = wdf.copy()
+                if isinstance(w.get('start'), pd.Series):
+                    w['start'] = pd.to_datetime(w['start']).dt.tz_localize(None)
+                if isinstance(w.get('end'), pd.Series):
+                    w['end'] = pd.to_datetime(w['end']).dt.tz_localize(None)
+                in_window = bool(((w['start'] <= now) & (now <= w['end'])).any())
+                # 次の開始までの分
+                future = w.loc[w['start'] > now]
+                if not future.empty:
+                    minutes_to = int((future['start'].min() - now).total_seconds() // 60)
+        except Exception:
+            pass
+
+        parts = [
+            f"last_close={last_close:.3f}",
+            (f"ATR14={atr14:.3f}" if np.isfinite(atr14) else "ATR14=N/A"),
+            (f"day_range≈{day_range:.3f}" if np.isfinite(day_range) else "day_range=N/A"),
+        ]
+        if near_cnt is not None:
+            parts.append(f"levels_near(±10p)={near_cnt}")
+        sw = st.session_state.get('suppress_win', st.session_state.get('news_win', 30))
+        parts.append(f"suppress_win_min={int(sw)}")
+        parts.append(f"news_now={'YES' if in_window else 'NO'}")
+        if minutes_to is not None:
+            parts.append(f"next_news_in_min={minutes_to}")
+        return "; ".join(parts)
+    except Exception:
+        return ""
+
 # ======== 返答抽出の安全版ユーティリティ ========
 def _extract_text_from_responses(resp) -> str:
     """OpenAI Responses API / Chat Completions などの返却を安全に文字列化"""
@@ -1458,6 +1603,94 @@ def _fallback_answer(user_q: str) -> str:
         "・ネット/APIキー/レート制限の状態を確認\n"
     )
 
+# ======== "Next action" の解析とワンクリック適用 ========
+def _find_next_action_line(answer: str) -> str | None:
+    if not isinstance(answer, str):
+        return None
+    lines = [l.strip() for l in answer.splitlines() if l.strip()]
+    # 英語/日本語のゆらぎに緩く対応
+    for l in lines:
+        low = l.lower()
+        if low.startswith("next action") or "次のアクション" in l or "次の対応" in l:
+            # 形式: "Next action: ..." を想定。コロン以降を返す。
+            p = l.split(":", 1)
+            return (p[1] if len(p) > 1 else l).strip()
+    # 行頭でなくても含まれていれば拾う
+    for l in lines:
+        if "next action" in l.lower():
+            p = l.split(":", 1)
+            return (p[1] if len(p) > 1 else l).strip()
+    return None
+
+def _parse_actions_from_text(txt: str) -> list[dict]:
+    """簡易パーサ：theta/θ, break_buffer の +/−/=/→ を抽出。
+    戻り: [{'param': 'theta_base', 'op': 'delta'|'set', 'value': float, 'raw': str}, ...]
+    """
+    import re
+    if not isinstance(txt, str) or not txt.strip():
+        return []
+    s = txt.replace("＋", "+").replace("－", "-").replace("→", "=")
+    # 対象パラメータの別名
+    param_alias = {
+        'theta_base': ["θ", "theta", "theta_base"],
+        'break_buf': ["break_buffer", "break buf", "breakbuffer", "ブレイクバッファ", "バッファ"],
+    }
+    actions: list[dict] = []
+    for key, aliases in param_alias.items():
+        for a in aliases:
+            # パターン1: "alias +0.05" / "alias -0.01"
+            pat_delta = re.compile(rf"\b{re.escape(a)}\b\s*([+-])\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+            for m in pat_delta.finditer(s):
+                sign = 1.0 if m.group(1) == "+" else -1.0
+                val = float(m.group(2)) * sign
+                actions.append({"param": key, "op": "delta", "value": val, "raw": m.group(0)})
+            # パターン2: "alias = 0.65" / "alias 0.65"（=省略も許容）
+            pat_set = re.compile(rf"\b{re.escape(a)}\b\s*(?:=)?\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+            for m in pat_set.finditer(s):
+                # delta と誤衝突避け："+/-"を含まないマッチのみ採用
+                if any(ch in m.group(0) for ch in ['+','-']):
+                    continue
+                actions.append({"param": key, "op": "set", "value": float(m.group(1)), "raw": m.group(0)})
+    # 重複除去（raw基準）
+    uniq = []
+    seen = set()
+    for a in actions:
+        r = a.get("raw")
+        if r in seen:
+            continue
+        seen.add(r)
+        uniq.append(a)
+    return uniq[:6]  # ボタン爆増防止
+
+def _apply_action_to_state(a: dict):
+    """セッション状態へ安全に適用。範囲をクランプしてから保存。"""
+    p = a.get("param")
+    op = a.get("op")
+    v  = float(a.get("value", 0.0))
+    if p == 'theta_base':
+        cur = float(st.session_state.get('theta_base', 0.60))
+        if op == 'delta':
+            new = cur + v
+        else:
+            new = v
+        # 安全域へクリップ
+        new = float(max(0.30, min(0.99, new)))
+        st.session_state['theta_base'] = new
+        log_event('ai_apply', param='theta_base', old=cur, new=new, op=op, value=v)
+        st.success(f"θ を {cur:.2f} → {new:.2f} に適用しました")
+    elif p == 'break_buf':
+        cur = float(st.session_state.get('break_buf', 0.05))
+        if op == 'delta':
+            new = cur + v
+        else:
+            new = v
+        new = float(max(0.00, min(1.00, new)))
+        st.session_state['break_buf'] = new
+        log_event('ai_apply', param='break_buf', old=cur, new=new, op=op, value=v)
+        st.success(f"break_buffer を {cur:.3f} → {new:.3f} に適用しました")
+    else:
+        st.info(f"未対応のパラメータ: {p}")
+
 # ======== コパイロット呼び出し（例外をUIに出す）========
 def ask_copilot(app_state: dict, user_question: str) -> str:
     global client, DEFAULT_OAI_MODEL
@@ -1478,23 +1711,87 @@ def ask_copilot(app_state: dict, user_question: str) -> str:
     raw = None
     ans = ""
     error_msg = None
-    model_used = os.getenv("OPENAI_MODEL", DEFAULT_OAI_MODEL)
+    # UIの選択があれば優先
+    model_used = st.session_state.get("openai_model", os.getenv("OPENAI_MODEL", DEFAULT_OAI_MODEL))
+    temperature = float(st.session_state.get("openai_temp", 0.3))
+
+    # 追加コンテキスト（ローカルドキュメント）
+    knowledge = _build_knowledge_snippet(max_chars=1200)
+    # 直近状況の要約（軽量）
+    recent_summary = _build_recent_summary()
+
+    # Chat Completions へのフォールバック対応（古いSDKは responses が無い）
+    def _map_model_for_chat(name: str) -> str:
+        m = (name or "").strip().lower()
+        # Responses専用っぽいモデル指定をChat互換モデルへ寄せる
+        if m.startswith("gpt-5"):
+            return "gpt-4o-mini"
+        return name
 
     try:
-        raw = client.responses.create(
-            model=model_used,
-            input=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": f"APP_STATE_JSON:\n{json.dumps(app_state, ensure_ascii=False)}"},
-                {"role": "user", "content": f"QUESTION:\n{user_question or '(空)'}"},
-            ],
-            max_output_tokens=2000,
-        )
+        api_used = None
+        attempts = 3
+        last_err: Exception | None = None
+        for i in range(attempts):
+            try:
+                if hasattr(client, "responses"):
+                    # 新SDK（Responses API）
+                    api_used = "responses"
+                    raw = client.responses.create(
+                        model=model_used,
+                        input=[
+                            {"role": "system", "content": system},
+                            *( [{"role": "user", "content": f"KNOWLEDGE:\n{knowledge}"}] if knowledge else [] ),
+                            *( [{"role": "user", "content": f"RECENT_SUMMARY:\n{recent_summary}"}] if recent_summary else [] ),
+                            {"role": "user", "content": f"APP_STATE_JSON:\n{json.dumps(app_state, ensure_ascii=False)}"},
+                            {"role": "user", "content": f"QUESTION:\n{user_question or '(空)'}"},
+                        ],
+                        max_output_tokens=2000,
+                    )
+                else:
+                    # 旧SDK（Chat Completions）
+                    api_used = "chat.completions"
+                    messages = [
+                        {"role": "system", "content": system},
+                        *( [{"role": "user", "content": f"KNOWLEDGE:\n{knowledge}"}] if knowledge else [] ),
+                        *( [{"role": "user", "content": f"RECENT_SUMMARY:\n{recent_summary}"}] if recent_summary else [] ),
+                        {"role": "user", "content": f"APP_STATE_JSON:\n{json.dumps(app_state, ensure_ascii=False)}"},
+                        {"role": "user", "content": f"QUESTION:\n{user_question or '(空)'}"},
+                    ]
+                    raw = client.chat.completions.create(
+                        model=_map_model_for_chat(model_used),
+                        messages=messages,
+                        max_tokens=1000,
+                        temperature=temperature,
+                    )
+                # 成功したらループを抜ける
+                break
+            except Exception as ex:
+                last_err = ex
+                msg = str(ex).lower()
+                transient = any(k in msg for k in ["rate", "timeout", "temporarily", "overloaded", "connection reset", "429"])
+                if i < attempts - 1 and transient:
+                    # エクスポネンシャルバックオフ
+                    time.sleep(0.8 * (2 ** i))
+                    continue
+                else:
+                    raise ex
+
         ans = _extract_text_from_responses(raw).strip()
+        # usage（課金/トークン目安）をログに残す（あれば）
+        try:
+            usage = getattr(raw, "usage", None)
+            if usage:
+                total = getattr(usage, "total_tokens", None) or getattr(usage, "total", None)
+                prompt_t = getattr(usage, "prompt_tokens", None)
+                comp_t = getattr(usage, "completion_tokens", None)
+                log_event('ai_usage', api=api_used, model=model_used, total_tokens=total, prompt_tokens=prompt_t, completion_tokens=comp_t)
+        except Exception:
+            pass
         # デバッグ出力はフラグで制御（本番は非表示）
         if os.getenv("DEBUG_AI_RESPONSES", "0") in ("1", "true", "True"):
             st.markdown("### APIレスポンス詳細")
-            st.write(raw)
+            st.write({"api_used": api_used, "raw": raw})
         if not ans:
             st.error("AI応答が空でした。APIレスポンス内容を確認してください。")
             # 本番では生レスポンスを表示しない（漏洩防止）
@@ -1515,6 +1812,9 @@ def ask_copilot(app_state: dict, user_question: str) -> str:
         "extracted_len": len(ans) if isinstance(ans, str) else None,
         "had_error": error_msg is not None,
         "error": error_msg,
+        # UI設定を可視化
+        "api_used": "responses" if hasattr(client, "responses") else "chat.completions",
+        "temperature": temperature,
     }
     with st.container():
         st.markdown("**デバッグ情報**")
@@ -1523,8 +1823,24 @@ def ask_copilot(app_state: dict, user_question: str) -> str:
     return ans
 
 # ======== サイドバー：入力だけ。表示はメインに回す ========
-with st.sidebar.expander("🤖 コパイロット（gpt-5-mini）", expanded=False):
-    user_q = st.text_area("相談内容", height=90, placeholder="例）この設定でNY時間は θ を上げるべき？")
+with st.sidebar.expander("🤖 コパイロット", expanded=False):
+    # モデル/温度の簡易設定
+    st.text_input("モデル", key="openai_model", value=DEFAULT_OAI_MODEL, help="OPENAI_MODELが未設定の場合のデフォルト。Chat互換でない場合は自動でgpt-4o-miniへフォールバック")
+    st.slider("温度(創造性)", 0.0, 1.0, 0.3, 0.1, key="openai_temp")
+
+    # プロンプトのプリセット
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("θの調整"):
+            st.session_state["copilot_q"] = "このボラティリティなら θ は上げ下げどちらが妥当？根拠も簡潔に。"
+    with col2:
+        if st.button("ブレイク戦略"):
+            st.session_state["copilot_q"] = "直近のレベルとニュースを踏まえたエントリー/利確/損切りの指針は？"
+    with col3:
+        if st.button("ニュース対応"):
+            st.session_state["copilot_q"] = "重要ニュース前後の抑制ウィンドウ設定と回避ルールの提案をください。"
+
+    user_q = st.text_area("相談内容", key="copilot_q", height=100, placeholder="例）この設定でNY時間は θ を上げるべき？")
     if st.button("AIに相談"):
         if not (user_q or "").strip():
             st.warning("質問を入力してください。")
@@ -1533,11 +1849,28 @@ with st.sidebar.expander("🤖 コパイロット（gpt-5-mini）", expanded=Fal
                 app_state = collect_state_for_ai()
                 ans = ask_copilot(app_state, user_q)
                 st.session_state["copilot_answer"] = ans  # ← 状態に保存
+                # 解析されたアクションも保存
+                na_line = _find_next_action_line(ans)
+                st.session_state["copilot_next_action_line"] = na_line
+                st.session_state["copilot_actions"] = _parse_actions_from_text(na_line or "")
 
 # ======== メインエリアで“直近の回答”を表示 ========
 if st.session_state.get("copilot_answer"):
     st.subheader("🤖 コパイロットの回答")
     st.write(st.session_state["copilot_answer"])
+
+    # Next action のクイック適用
+    actions = st.session_state.get("copilot_actions", [])
+    if actions:
+        st.markdown("#### ⚡ 提案のクイック適用")
+        cols = st.columns(min(3, len(actions)))
+        for i, a in enumerate(actions):
+            label = a.get("raw") or f"{a.get('param')} {a.get('op')} {a.get('value')}"
+            with cols[i % len(cols)]:
+                if st.button(label, key=f"apply_ai_{i}"):
+                    _apply_action_to_state(a)
+                    # 適用後に最新の app_state を AI へ再送するかは任意。
+                    # ここでは即反映（再描画）に留める。
 
 # ======== 免責は従来どおり（常時表示） ========
 st.markdown("""
@@ -1574,6 +1907,8 @@ def ui_info(msg: str):
         st.info(msg)
     except Exception:
         print(f"[INFO] {msg}")
+
+## moved earlier: _build_recent_summary is defined above to avoid NameError during ask_copilot
 
 # ---- 入力検証: 価格DF（Index=DatetimeIndex, JST前提） ----
 def validate_price_df_indexed(
@@ -2378,7 +2713,9 @@ with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
                 import os
                 csv_path = os.path.join("data", "USDJPY_15m.csv")
                 if os.path.exists(csv_path):
-                    tmp = pd.read_csv(csv_path)
+                    from src.ui.cache import file_mtime, read_csv_cached
+                    m = file_mtime(csv_path)
+                    tmp = read_csv_cached(csv_path, m)
                     # 列名の正規化
                     ren = {}
                     for c in tmp.columns:
@@ -2414,19 +2751,18 @@ with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
 
             # 3) 特徴量作成（未来情報なし）
             try:
-                df_feats = prepare_df_feats_for_inference(df_raw)
+                from src.ui.features_cache import prepare_feats_cached
+                df_feats = prepare_feats_cached(df_raw)
             except Exception as e:
                 st.error(f"特徴量生成に失敗: {e}")
                 df_feats = None
             if df_feats is None or df_feats.empty:
                 st.warning("特徴量が空です（データ不足の可能性）")
             else:
-                # 4) モデル/メタ読み込み → 推論
+                # 4) モデル/メタ読み込み → 推論（キャッシュ適用）
                 try:
-                    model, Xcols = load_break_model("models/break_model.joblib")
-                    meta_local = load_break_meta("models/break_meta.json")
-                    use_cols = (meta_local.get("features") if isinstance(meta_local, dict) else None) or Xcols
-                    pred = predict_with_session_theta(df_feats, model, use_cols, meta_local)
+                    from src.ui.inference_cache import predict_cached
+                    pred = predict_cached(df_feats, "models/break_model.joblib", "models/break_meta.json", None)
                 except Exception as e:
                     st.error(f"推論に失敗: {e}")
                     pred = None
@@ -2531,7 +2867,9 @@ with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
                         import os
                         csv_path = os.path.join("data", "USDJPY_15m.csv")
                         if os.path.exists(csv_path):
-                            tmp = pd.read_csv(csv_path)
+                            from src.ui.cache import file_mtime, read_csv_cached
+                            m = file_mtime(csv_path)
+                            tmp = read_csv_cached(csv_path, m)
                             # 列名の正規化
                             ren = {}
                             for c in tmp.columns:
@@ -2617,7 +2955,9 @@ with st.sidebar.expander("🧪 グリッド評価（Apply Best）", expanded=Fal
             import os
             csv_path = os.path.join("data", "USDJPY_15m.csv")
             if os.path.exists(csv_path):
-                tmp = pd.read_csv(csv_path)
+                from src.ui.cache import file_mtime, read_csv_cached
+                m = file_mtime(csv_path)
+                tmp = read_csv_cached(csv_path, m)
                 ren = {}
                 for c in tmp.columns:
                     lc = str(c).lower()
@@ -2652,11 +2992,10 @@ with st.sidebar.expander("🧪 グリッド評価（Apply Best）", expanded=Fal
         if df_raw is None or df_raw.empty:
             return pd.DataFrame()
         try:
-            df_feats = prepare_df_feats_for_inference(df_raw)
-            model, Xcols = load_break_model("models/break_model.joblib")
-            meta_local = load_break_meta("models/break_meta.json")
-            use_cols = (meta_local.get("features") if isinstance(meta_local, dict) else None) or Xcols
-            pred = predict_with_session_theta(df_feats, model, use_cols, meta_local)
+            from src.ui.features_cache import prepare_feats_cached
+            df_feats = prepare_feats_cached(df_raw)
+            from src.ui.inference_cache import predict_cached
+            pred = predict_cached(df_feats, "models/break_model.joblib", "models/break_meta.json", None)
         except Exception:
             return pd.DataFrame()
         from label_break import build_break_labels, BreakLabelConfig as BreakCfg
@@ -2970,7 +3309,7 @@ else:
 
 
 # ---------------- データ取得 ----------------
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=PRICE_FETCH_TTL)
 def load_data(sym: str, period: str, interval: str,
               oanda_token: str = "", oanda_account: str = "", oanda_env: str = "practice") -> pd.DataFrame:
     """
@@ -3116,7 +3455,20 @@ with st.spinner("データ取得中..."):
         return load_data(symbol, period_raw, interval, oanda_token, oanda_account, oanda_env)
 
     log_event('price_fetch_start', corr=corr, symbol=symbol, period=period_raw, interval=interval)
+    _t0 = time.perf_counter()
     df, err = safe_call(fetch_prices, symbol, period_raw, interval, oanda_token, oanda_account, oanda_env)
+    _elapsed_ms = int((time.perf_counter() - _t0) * 1000)
+    try:
+        st.session_state.setdefault('profiling', {})
+        st.session_state['profiling']['price_fetch_ms'] = _elapsed_ms
+    except Exception:
+        pass
+    if DEV_PROFILING:
+        try:
+            with st.sidebar.expander("Dev: profiling", expanded=False):
+                st.caption(f"price_fetch: {_elapsed_ms} ms  |  ttl={PRICE_FETCH_TTL}s")
+        except Exception:
+            logger.debug("profiling sidebar render skipped")
     if err or df is None or df.empty:
         log_event('price_fetch_failed', corr=corr, error=str(err) if err else 'empty')
         ui_error(f"[price] 取得失敗: {err if err else 'データなし'}")
@@ -3346,7 +3698,7 @@ if news_file is not None:
         st.info("本日の主要イベントはありません（またはCSVの日時を解釈できませんでした）")
 
 # ---- 重要度別ウィンドウ生成 & 赤影描画ユーティリティ ----
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=EVENTS_TTL)
 def build_event_windows(events_df: pd.DataFrame, imp_threshold: int, mapping: dict[int,int]) -> pd.DataFrame:
     from utils.app_core import build_event_windows_pure
     return build_event_windows_pure(events_df, imp_threshold, mapping)
@@ -5016,6 +5368,12 @@ try:
         tbl = pd.DataFrame(rows)
         if not tbl.empty:
             tbl = tbl.sort_values(by=["品質"], ascending=False)
+            # ATR/kSL/kTP パネルを一覧の直上に表示
+            try:
+                from src.ui.atr_panel import render_atr_panel as _render_atr_panel
+                _render_atr_panel(data_path=st.session_state.get("default_data_path", "data/USDJPY_15m.csv"))
+            except Exception:
+                pass
             st.subheader("検出パターン一覧")
             st.dataframe(tbl, use_container_width=True)
         else:
@@ -5034,7 +5392,7 @@ try:
 except Exception:
     st.session_state['pattern_ev_r'] = None
 # ---------------- モデル読み込み（TTL付きキャッシュ） ----------------
-@st.cache_resource(show_spinner=False, ttl=600)
+@st.cache_resource(show_spinner=False, ttl=MODEL_CACHE_TTL)
 def _load_break_model_cached(path: str):
     return joblib.load(path)
 

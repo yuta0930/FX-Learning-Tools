@@ -1,0 +1,57 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        name: mypy (light)
+        # Keep the "light" config aligned with VS Code task
+        args: ["--config-file", "mypy.ini", "src/core", "src/policy", "tests"]
+        additional_dependencies: []
+
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest (fast/safety/pipeline)
+        entry: python -m pytest -q -k "fast or safety or filters or pipeline or observability"
+        language: system
+        pass_filenames: false
+        stages: [commit]
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["check", "."]
+
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        args: ["--line-length=88"]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        additional_dependencies: []
+        args: ["--config-file", "mypy.ini", "src/core", "src/policy", "tests"]
+
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest -k fast (quick)
+        entry: python -m pytest -q -k "fast or safety or filters or pipeline or observability"
+        language: system
+        pass_filenames: false

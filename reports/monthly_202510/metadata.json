@@ -1,0 +1,21 @@
+{
+  "generated_at": "2025-10-26T17:47:21.215443",
+  "year_month": "202510",
+  "time_range": {
+    "min": null,
+    "max": null
+  },
+  "rows": 0,
+  "sources": [],
+  "git_commit": "a75864f",
+  "config_hashes": {
+    "config\\config.yml": "c3f81f733e8e7fcb2ea327cf6ebeddbd478b334acc1a7012efbcda2600235d6c",
+    "config\\events.yml": "02c7d8e735106ed9f339d9985cea4143d4a0d8a60d855cedc0d04cd98f968f4d",
+    "config\\reasons_map.yml": "4ac23a7ebdc5f318e0ecfc3f242fd86e8b636f6d3c557eed57f56e6795a9bef3"
+  },
+  "artifacts": {
+    "daily_csv": "reports\\monthly_202510\\daily.csv",
+    "top_reasons_csv": "reports\\monthly_202510\\top_reasons.csv"
+  },
+  "notes": "Empty inputs produce empty CSVs with headers; safe No-Op by design."
+}

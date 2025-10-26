@@ -1,0 +1,22 @@
+{
+  "H": 16,
+  "delta_mult": 0.6,
+  "spread_pips": 0.5,
+  "pip_size": 0.01,
+  "n_rows": 5666,
+  "n_signals": 33,
+  "hit_rate": 0.2727272727272727,
+  "ev_R": -0.5479413283241396,
+  "baseline_up": 0.5307134006018764,
+  "baseline_down": 0.4689325544344132,
+  "baseline_either": 0.9996459550362896,
+  "uplift_long_vs_up": 0.5138880465765056,
+  "uplift_short_vs_down": 0.5815916812519304,
+  "verdict": "Needs Fix",
+  "hit_rate_ci": {
+    "lo": 0.15067272656322814,
+    "hi": 0.44217883254386814,
+    "n": 33
+  },
+  "ev_curve_best": null
+}

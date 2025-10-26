@@ -1,0 +1,21 @@
+default:
+  k_sl: 0.60
+  k_tp: 1.50
+  timeout_bars: 10
+  min_spread_pips: 1.0
+sessions:
+  Tokyo:
+    k_sl: 0.70
+    k_tp: 1.20
+    timeout_bars: 12
+    min_spread_pips: 0.8
+  London:
+    k_sl: 0.60
+    k_tp: 1.60
+    timeout_bars: 10
+    min_spread_pips: 1.0
+  NewYork:
+    k_sl: 0.60
+    k_tp: 1.50
+    timeout_bars: 10
+    min_spread_pips: 1.0

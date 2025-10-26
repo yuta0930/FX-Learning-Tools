@@ -1,0 +1,7 @@
+categories:
+  spread: ["spread>", "スプレッド", "spread "]
+  news: ["news_window", "news", "経済指標"]
+  kill: ["KILL", "MODE", "disabled by MODE", "kill.switch"]
+  atr_low: ["atr<"]
+  atr_high: ["atr>"]
+  drift: ["drift", "PSI", "JS "]
