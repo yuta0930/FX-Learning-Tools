@@ -1536,8 +1536,10 @@ def _build_recent_summary(n_bars_day: int = 96) -> str:
         # 直近1日程度のレンジ
         tail = df_local.tail(max(n_bars_day, 30))
         day_range = float(tail["high"].max() - tail["low"].min()) if {"high","low"}.issubset(tail.columns) else float('nan')
-        # ATR(14)
-        atr14 = compute_latest_atr(df_local.reset_index().rename(columns={df_local.index.name or 'timestamp':'timestamp'}), 14)
+        # ATR(14) — 計算コスト削減のため末尾N本に限定（近似）。
+        # 既存の他箇所では tail(500) を用いているため整合を取る。
+        _df_for_atr = df_local.reset_index().rename(columns={df_local.index.name or 'timestamp':'timestamp'})
+        atr14 = compute_latest_atr(_df_for_atr.tail(500), 14)
         # レベル密度（±10pips）
         lvls = st.session_state.get("topk_levels", [])
         near_cnt = None
@@ -2172,7 +2174,7 @@ extra_cost_pips = float(fee_commission + fee_slippage + fee_gap)
 
 st.sidebar.subheader("自動更新")
 auto_refresh = st.sidebar.checkbox("自動で再取得（ページ再読み込み）", value=True)
-refresh_secs = st.sidebar.slider("更新間隔（秒）", 30, 600, 600, help="15分足は60〜180秒が目安")
+refresh_secs = st.sidebar.slider("更新間隔（秒）", 30, 600, 180, help="15分足は60〜180秒が目安")
 try:
     from streamlit_autorefresh import st_autorefresh
     if auto_refresh:
@@ -3259,8 +3261,9 @@ look = st.sidebar.slider("左右の窓幅", 3, 15, 5)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("水平サポレジ（クラスタ）")
+# 推奨初期値: USDJPY 15m を想定して eps≈0.08（約8pips）、min_samples=5
 eps = st.sidebar.number_input("DBSCAN eps（価格）", value=0.08, step=0.01)
-min_samples = st.sidebar.slider("min_samples", 3, 12, 4)
+min_samples = st.sidebar.slider("min_samples", 3, 12, 5)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("トレンド＆チャネル")

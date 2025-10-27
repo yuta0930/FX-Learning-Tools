@@ -105,6 +105,21 @@ def _read_any(path: str | Path) -> pd.DataFrame:
     return _read_any_cached(str(p), mtime, nonce)
 
 
+@st.cache_data(show_spinner=False)
+def _add_atr_cached(df: pd.DataFrame, period: int = 14, nonce: float | None = None) -> pd.DataFrame:
+    """Cache-friendly wrapper for adding ATR column if missing.
+
+    - Keyed by df content (trimmed upstream) + period + nonce
+    - nonce allows force refresh from UI without relying on file mtime
+    """
+    try:
+        from src.core.ta import add_atr_if_missing
+
+        return add_atr_if_missing(df, period=period)
+    except Exception:
+        return df
+
+
 def _ensure_time_utc(df: pd.DataFrame, time_col: str = "time") -> pd.DataFrame:
     d = df.copy()
     # If desired column exists, normalize it and return
@@ -264,11 +279,19 @@ def render_atr_panel(
         # 2) Normalize time to UTC column
         data = _ensure_time_utc(data, time_col=time_col)
 
-        # 3) Add ATR if missing
+        # 2.5) Trim to recent bars to reduce ATR compute cost
+        # UIで利用するのは直近値（+前バー）であるため、末尾の一定本数に限定しても実用上影響は軽微。
+        # 既存の実装に合わせて 500 本を上限とする。
         try:
-            from src.core.ta import add_atr_if_missing
+            if len(data) > 600:  # 少し余裕を持たせる
+                data = data.tail(600).copy()
+        except Exception:
+            pass
 
-            data = add_atr_if_missing(data)
+        # 3) Add ATR if missing (cached)
+        try:
+            nonce = float(st.session_state.get("atr_force_reload_key")) if "atr_force_reload_key" in st.session_state else None
+            data = _add_atr_cached(data, period=14, nonce=nonce)
         except Exception:
             pass  # keep as-is
 
@@ -280,15 +303,17 @@ def render_atr_panel(
                 last_atr_try = pd.to_numeric(data[atr_col], errors="coerce").astype(float).iloc[-1]
                 if not np.isfinite(last_atr_try):
                     # Force recompute: drop existing atr and rebuild
-                    from src.core.ta import add_atr_if_missing as _add
-
                     tmp = data.copy()
                     try:
                         if atr_col in tmp.columns:
                             tmp = tmp.drop(columns=[atr_col])
                     except Exception:
                         pass
-                    tmp = _add(tmp)
+                    try:
+                        nonce = float(st.session_state.get("atr_force_reload_key")) if "atr_force_reload_key" in st.session_state else None
+                    except Exception:
+                        nonce = None
+                    tmp = _add_atr_cached(tmp, period=14, nonce=nonce)
                     if atr_col in tmp.columns:
                         data[atr_col] = tmp[atr_col]
         except Exception:
