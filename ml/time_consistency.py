@@ -47,7 +47,8 @@ def true_range_atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
         (df['high'] - prev_close).abs(),
         (df['low'] - prev_close).abs()
     ], axis=1).max(axis=1))
-    atr = tr.rolling(n, min_periods=n).mean()
+    # Wilder EWM for consistency across project
+    atr = tr.ewm(alpha=1.0/float(n), adjust=False).mean()
     return atr
 
 def build_break_labels(df: pd.DataFrame, cfg: BreakLabelConfig) -> pd.Series:

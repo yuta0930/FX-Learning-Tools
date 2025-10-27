@@ -23,6 +23,24 @@ except Exception:
 # ATR/kSL/kTP panel (always-on, safe no-op)
 try:
     from src.ui.atr_panel import render_atr_panel
+    # Data source selector (optional)
+    with st.expander("データソース (任意) ⚙", expanded=False):
+        cur_path = st.session_state.get("default_data_path", "data/USDJPY_15m.csv")
+        st.write(f"現在のパス: {cur_path}")
+        new_path = st.text_input("CSV/Parquetのパスを指定", value=str(cur_path), key="ds_input_path")
+        cols = st.columns([1,1,2])
+        with cols[0]:
+            if st.button("パスを適用"):
+                st.session_state["default_data_path"] = new_path
+                st.success(f"データパスを更新しました: {new_path}")
+        with cols[1]:
+            if st.button("キャッシュクリア"):
+                try:
+                    st.cache_data.clear()
+                    st.success("キャッシュをクリアしました。再描画してください。")
+                except Exception as e:
+                    st.info(f"キャッシュクリアに失敗: {e}")
+
     render_atr_panel(data_path=st.session_state.get("default_data_path", "data/USDJPY_15m.csv"))
 except Exception:
     pass

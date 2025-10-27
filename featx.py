@@ -11,7 +11,7 @@ def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     h,l,c = df["high"], df["low"], df["close"]
     pc = c.shift(1)
     tr = pd.concat([(h-l).abs(), (h-pc).abs(), (l-pc).abs()], axis=1).max(axis=1)
-    return tr.rolling(period, min_periods=period).mean()
+    return tr.ewm(alpha=1.0/float(period), adjust=False).mean()
 
 def _rv_sigma(df: pd.DataFrame, win: int = 20) -> pd.Series:
     ret1 = df["close"].pct_change(1)

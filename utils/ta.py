@@ -17,7 +17,7 @@ __all__ = [
 ]
 
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """Average True Range (simple moving average).
+    """Average True Range using Wilder's smoothing (EWM, alpha=1/period).
     Requirements: df has columns high, low, close (lower-case)
     Returns: pd.Series aligned to df.index
     """
@@ -30,8 +30,8 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     d = df.rename(columns=str.lower)
     high, low, close = d["high"], d["low"], d["close"]
     prev_close = close.shift(1)
-    tr = pd.concat([(high-low), (high-prev_close).abs(), (low-prev_close).abs()], axis=1).max(axis=1)
-    return tr.rolling(int(period), min_periods=int(period)).mean()
+    tr = pd.concat([(high-low).abs(), (high-prev_close).abs(), (low-prev_close).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0/float(period), adjust=False).mean()
 
 def swing_pivots(df: pd.DataFrame, look: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Detect swing highs/lows using centered rolling window of size=look.

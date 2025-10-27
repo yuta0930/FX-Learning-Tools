@@ -1,0 +1,5 @@
+dashboard:
+  enabled: true
+  refresh_sec: 15
+  kpi: ["W","PF","EV_pips","MaxDD","weekly_trades","avg_hold_secs"]
+  alerts: {slack_webhook_env: "SLACK_WEBHOOK_URL"}

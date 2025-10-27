@@ -1,0 +1,17 @@
+ab:
+  enabled: true
+  allocation: {A: 0.6, B: 0.4}
+  variants:
+    A: {ksl_atr: 0.55, ktp_atr: 1.80}
+    B: {ksl_atr: 0.60, ktp_atr: 1.60}
+  eval:
+    window_trades: 300
+    metric_primary: "PF"
+    min_effect_size: 0.2
+    promote_on_sig: true
+  promote_policy:
+    delta_ev_min: 0.02  # optional; if using EV as primary
+    shift_step: 0.10
+    max_exploit: 0.90
+    cooldown_hours: 12
+    min_trades_per_arm: 100

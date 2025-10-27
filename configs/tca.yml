@@ -1,0 +1,7 @@
+tca:
+  enabled: true
+  min_samples: 500
+  model: "quantile"   # or "linear"
+  use_features: ["spread","atr_1m","atr_15m","session","size","latency_ms","news_flag"]
+  warn_slip_p50: 0.35
+  halt_slip_p90: 0.80

@@ -10,15 +10,11 @@ try:
 except Exception:
     pass
 
-# ATR/kSL/kTP panel (always-on). If df is not loaded yet, will fallback later using data_path.
-_atr_panel_added = False
+# ATR/kSL/kTP パネルは、データパスのユーザー入力を反映した後に描画する
 try:
     from src.ui.atr_panel import render_atr_panel
-    # We'll render once after df is loaded below; temporarily show with default path to avoid delay
-    render_atr_panel(data_path=st.session_state.get("default_data_path", "data/USDJPY_15m.csv"))
-    _atr_panel_added = True
 except Exception:
-    pass
+    render_atr_panel = None
 
 DATA_PATH_DEFAULT = Path("data/USDJPY_15m.csv")
 EVENTS_PATH_DEFAULT = Path("data/events.csv")  # time列（JST/naive想定）
@@ -49,9 +45,9 @@ if df is None:
     st.info("マーケットCSVが見つかりません（例: data/USDJPY_15m.csv）。存在しなくてもページは落ちません。")
     st.stop()
 
-# Re-render panel with in-memory df (more accurate and faster for subsequent UI)
+# パネル描画（ユーザー入力の data_path を反映、in-memory df を優先）
 try:
-    if not _atr_panel_added:
+    if render_atr_panel:
         render_atr_panel(df=df)
 except Exception:
     pass

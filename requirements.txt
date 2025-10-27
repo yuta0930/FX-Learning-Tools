@@ -69,3 +69,4 @@ pyarrow==17.0.0
 httpx<0.28
 pandera==0.20.3
 pre-commit==3.7.1
+statsmodels==0.14.4

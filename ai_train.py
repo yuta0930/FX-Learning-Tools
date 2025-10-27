@@ -56,8 +56,9 @@ def clamp_period_for_interval(period: str, interval: str) -> str:
 def atr(df, period=14):
     h,l,c = df["High"], df["Low"], df["Close"]
     pc = c.shift(1)
-    tr = pd.concat([(h-l),(h-pc).abs(),(l-pc).abs()], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+    tr = pd.concat([(h-l).abs(),(h-pc).abs(),(l-pc).abs()], axis=1).max(axis=1)
+    # Wilder smoothing for consistency
+    return tr.ewm(alpha=1.0/float(period), adjust=False).mean()
 
 def fetch_data(symbol: str, period: str, interval: str) -> pd.DataFrame:
     """history→空ならdownloadでフォールバック。intradayは期間を自動短縮。"""

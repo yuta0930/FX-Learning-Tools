@@ -1,0 +1,11 @@
+drift:
+  enabled: true
+  features: ["pole_strength","flag_slope","contraction","atr_15m","session","spread"]
+  windows: {baseline_days: 30, rolling_days: 7}
+  psi_warn: 0.25
+  psi_halt: 0.50
+  ece_warn: 0.03
+  ece_halt: 0.06
+  actions:
+    warn: {quality_add: 0.03, p_add: 0.02}
+    halt: {entry_stop: true}

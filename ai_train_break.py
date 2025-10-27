@@ -767,6 +767,16 @@ def run_training(args):
     save_model(df, summary["use_cols"], args.model_out)
     save_meta(df, ev, {k: summary[k] for k in summary if k != "cv_df"}, args.meta_out)
     _append_model_history("passed", None)
+    # --- New: emit base calibrator artifact from OOF probs (for online calibration bootstrap) ---
+    try:
+        from app.calibration.online_calibrator import OnlineCalibrator
+        df_cal = pd.DataFrame({"y": y_oos.astype(float), "p_raw": p_all.astype(float)})
+        cal = OnlineCalibrator(method="isotonic")
+        cal.fit_and_eval(df_cal)
+        path_cal = cal.save_artifact()
+        print(f"[calibration] base calibrator saved -> {path_cal}")
+    except Exception as e:
+        print(f"[calibration][warn] base calibrator save skipped: {e}")
     print("[done] all artifacts saved.")
 
 def main():

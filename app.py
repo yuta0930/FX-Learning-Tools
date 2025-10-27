@@ -15,6 +15,16 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logger.addHandler(_h)
 
+# --- Minimal init: ensure directories exist (logs/artifacts/configs) ---
+try:
+    from initialize import ensure_dirs as _ensure_dirs
+    _ensure_dirs()
+except Exception as _e_init:
+    try:
+        logger.warning("init ensure_dirs failed: %s", _e_init)
+    except Exception:
+        pass
+
 # --- Config knobs (env-driven) ---
 def _int_from_env(name: str, default_val: int) -> int:
     try:
@@ -128,6 +138,28 @@ try:
     _render_safety_badge()
 except Exception:
     pass
+
+# --- データソース（任意）: アプリ本体からもパスを切り替え可能にする ---
+try:
+    import streamlit as _st
+    with _st.expander("データソース (任意) ⚙", expanded=False):
+        cur_path = _st.session_state.get("default_data_path", "data/USDJPY_15m.csv")
+        _st.write(f"現在のパス: {cur_path}")
+        new_path = _st.text_input("CSV/Parquetのパスを指定", value=str(cur_path), key="app_ds_input_path")
+        c_ds1, c_ds2 = _st.columns([1,1])
+        with c_ds1:
+            if _st.button("パスを適用", key="app_ds_apply"):
+                _st.session_state["default_data_path"] = new_path
+                _st.success(f"データパスを更新しました: {new_path}")
+        with c_ds2:
+            if _st.button("キャッシュクリア", key="app_ds_clear_cache"):
+                try:
+                    _st.cache_data.clear()
+                    _st.success("キャッシュをクリアしました。再描画してください。")
+                except Exception as _e:
+                    _st.info(f"キャッシュクリアに失敗: {_e}")
+except Exception:
+    pass
 from inference_break import load_break_meta
 from config.loader import get_config
 from risk_guard import make_guard_from_config
@@ -146,17 +178,39 @@ def compute_latest_atr(price_df, period: int = 14):
         for c in df.columns:
             lc = c.lower()
             if lc in req:
-                ren[c]=lc
+                ren[c] = lc
         if ren:
             df = df.rename(columns=ren)
-        hl = df['high'] - df['low']
+        # 末尾の未完成バー（high/low/closeのいずれかがNaN）を除外
+        try:
+            hh = pd.to_numeric(df['high'], errors='coerce').astype(float)
+            ll = pd.to_numeric(df['low'], errors='coerce').astype(float)
+            cc = pd.to_numeric(df['close'], errors='coerce').astype(float)
+            mask = hh.notna() & ll.notna() & cc.notna()
+            if len(mask) > 0 and not bool(mask.iloc[-1]):
+                # 末尾から有効な行まで切り落とし
+                last_valid_idx = mask[::-1].idxmax()
+                if pd.notna(last_valid_idx):
+                    df = df.loc[:last_valid_idx]
+        except Exception:
+            pass
+        hl = (df['high'] - df['low']).abs()
         pc = df['close'].shift(1)
         h_pc = (df['high'] - pc).abs()
         l_pc = (df['low'] - pc).abs()
         import pandas as _pd
         tr = _pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-        atr = tr.rolling(period, min_periods=period).mean()
+        # Wilder EWM for consistency
+        atr = tr.ewm(alpha=1.0/float(period), adjust=False).mean()
+        # 末尾がNaNなら、有効な直近の値を採用
+        if len(atr) == 0:
+            return float('nan')
         val = atr.iloc[-1]
+        if not np.isfinite(val):
+            try:
+                val = atr.dropna().iloc[-1]
+            except Exception:
+                return float('nan')
         return float(val) if np.isfinite(val) else float('nan')
     except Exception:
         return float('nan')
@@ -3830,7 +3884,8 @@ def _atr(high, low, close, window=14):
     prev_close = np.roll(close, 1)
     tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
     tr[0] = high[0] - low[0]
-    alpha = 2.0 / (window + 1.0)
+    # Wilder smoothing (alpha = 1/window) for consistency
+    alpha = 1.0 / max(1.0, float(window))
     atr = np.empty_like(tr)
     atr[0] = tr[:window].mean() if len(tr) >= window else tr[0]
     for i in range(1, len(tr)):
@@ -4164,7 +4219,8 @@ def _atr(high, low, close, window=14):
     prev_close = np.roll(close, 1)
     tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
     tr[0] = high[0] - low[0]
-    alpha = 2.0 / (window + 1.0)
+    # Wilder smoothing (alpha = 1/window) for consistency
+    alpha = 1.0 / max(1.0, float(window))
     atr = np.empty_like(tr)
     atr[0] = tr[:window].mean() if len(tr) >= window else tr[0]
     for i in range(1, len(tr)):

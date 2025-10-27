@@ -1,0 +1,23 @@
+gate:
+  enabled: true
+  safety:
+    on_missing_artifacts: halt  # calibrator/model missing -> halt entries
+  min_quality: 0.75
+  min_quality_tokyo: 0.80
+  p_threshold_break: 0.56
+  p_threshold_range: 0.62
+  atr_15m_ksl: {tokyo: 0.60, london: 0.55, ny: 0.55}
+  atr_15m_ktp: {tokyo: 1.20, london: 1.80, ny: 1.80}
+  spread_max: 0.30
+  news_blackout_min: 10
+  cooldown_on_losstreak: 3
+  cooldown_minutes: 45
+  daily_loss_cap_pct: 0.03
+  halt_on_weekend: true
+  use_slippage_guard: true
+  ev_pred_min: 0.0
+  drift_link:
+    apply_adjustment: true
+  slippage_guard:
+    enabled: true
+    pctl: 50  # 50 or 90; choose which slippage percentile to guard with
