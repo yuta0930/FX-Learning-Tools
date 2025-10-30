@@ -132,7 +132,7 @@ from monitoring import compute_psi, psi_severity, threshold_exceed_rate, healthc
 
 from build_level_break_prob_table import build_level_break_prob_table
 st.set_page_config(page_title="FX 自動ライン描画 - 完全版", page_icon="📈", layout="wide")
-# 安全バッジと ATR パネル（全画面で常時表示）
+# 安全バッジ表示
 try:
     from src.ui.safety_badge import render_safety_badge as _render_safety_badge
     _render_safety_badge()
@@ -998,6 +998,13 @@ def render_meta_summary(df: pd.DataFrame, windows_df: pd.DataFrame, meta: dict):
         with gcols[1]:
             pr = gate_stats.get('pass_rate')
             st.metric("ゲート通過率", f"{pr*100:.1f}%" if isinstance(pr, (int,float)) else "N/A")
+
+        # ゲート通過率などの値のすぐ下に ATR/kSL/kTP パネルを表示
+        try:
+            from src.ui.atr_panel import render_atr_panel as _render_atr_panel
+            _render_atr_panel(data_path=st.session_state.get("default_data_path", "data/USDJPY_15m.csv"))
+        except Exception:
+            pass
 
 class PurgedTimeSeriesSplit:
     def __init__(self, n_splits: int = 5, test_size: int | None = None, embargo: int = 0):
@@ -5427,12 +5434,7 @@ try:
         tbl = pd.DataFrame(rows)
         if not tbl.empty:
             tbl = tbl.sort_values(by=["品質"], ascending=False)
-            # ATR/kSL/kTP パネルを一覧の直上に表示
-            try:
-                from src.ui.atr_panel import render_atr_panel as _render_atr_panel
-                _render_atr_panel(data_path=st.session_state.get("default_data_path", "data/USDJPY_15m.csv"))
-            except Exception:
-                pass
+            # ATR/kSL/kTP パネルは上部で常時表示済み（ここでは重複表示しない）
             st.subheader("検出パターン一覧")
             st.dataframe(tbl, use_container_width=True)
         else:
