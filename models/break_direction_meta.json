@@ -4,9 +4,9 @@
   "symbol": "USDJPY=X",
   "interval": "15m",
   "period": "60d",
-  "start_ts": "2025-06-09 10:15:00+01:00",
-  "end_ts": "2025-08-29 19:00:00+01:00",
-  "train_rows": 5613,
+  "start_ts": "2025-06-09 09:15:00+00:00",
+  "end_ts": "2025-10-31 18:45:00+00:00",
+  "train_rows": 8797,
   "class_balance": {
     "pos": null,
     "neg": null
@@ -18,12 +18,12 @@
   },
   "OOF": {
     "AUC": null,
-    "AP": 0.3638258493286537,
-    "Brier": 0.24150936624684546
+    "AP": 0.35826131955223206,
+    "Brier": 0.23429069880251951
   },
-  "threshold": 0.6212626262626263,
-  "coverage_at_threshold": 0.014759358288770053,
-  "ev_per_trade_at_threshold": 0.3043558667696987,
+  "threshold": 0.6212626262626262,
+  "coverage_at_threshold": 0.013437926330150068,
+  "ev_per_trade_at_threshold": 0.31279428424307876,
   "ev_cfg": {
     "rr": 1.0,
     "cost_ratio": 0.02
@@ -54,8 +54,8 @@
   },
   "random_state": 42,
   "code_hash": "842de0f5683db23c8bcf0862107df123e10495f6734348c59b72813c73ce342c",
-  "trained_at": 1761470058,
-  "trained_at_iso": "2025-10-26T09:14:18.660145+00:00",
+  "trained_at": 1762063683,
+  "trained_at_iso": "2025-11-02T06:08:03.710748+00:00",
   "ev": null,
   "up_summary": null,
   "down_summary": null
