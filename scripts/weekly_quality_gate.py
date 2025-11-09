@@ -59,8 +59,24 @@ def find_latest_summary() -> str | None:
 
 
 def run_cmd(cmd: list[str]) -> int:
+    """Run a subprocess ensuring project root & src are importable.
+
+    Adds the repository root (where this script resides one level above) and its
+    src/ directory to PYTHONPATH so that invoked scripts (e.g. health_check.py)
+    can import modules like `src.monitoring.health` without the caller needing
+    to manually adjust sys.path.
+    """
     print(f"[weekly] Running: {' '.join(cmd)}", flush=True)
-    return subprocess.call(cmd)
+    # Build augmented environment once per call.
+    env = os.environ.copy()
+    proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    extra_paths = [proj_root, os.path.join(proj_root, "src")]
+    old_pp = env.get("PYTHONPATH", "")
+    # Avoid duplicating entries
+    new_parts = [p for p in extra_paths if p and p not in old_pp.split(os.pathsep)]
+    if new_parts:
+        env["PYTHONPATH"] = os.pathsep.join(new_parts + ([old_pp] if old_pp else []))
+    return subprocess.call(cmd, env=env)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,300 +1,344 @@
 {
-  "version": "2.0.0",
-  "options": {
-    "env": {
-      "PYTHONPATH": "."
-    }
-  },
-  "tasks": [
-    {
-      "label": "Install requirements",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": ["-m", "pip", "install", "-r", "requirements.txt"],
-      "isBackground": false,
-      "group": "build"
-    },
-    {
-      "label": "Run daily jobs",
-      "type": "shell",
-      "command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\scripts\\run_daily_jobs.cmd",
-      "args": [],
-      "isBackground": false,
-      "group": "build"
-    },
-    {
-      "label": "Run tests",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": ["-m", "pytest", "-q"],
-      "isBackground": false,
-      "group": "build"
-    },
-    {
-      "label": "Run fast tests",
-      "type": "shell",
-      "command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
-      "args": [
-        "-m",
-        "pytest",
-        "-q",
-        "-k",
-        "app_smoke or risk_guard or metrics_smoke or baseline_loader or ev_utils or time_utils"
-      ],
-      "isBackground": false,
-      "group": "build",
-      "problemMatcher": "$python"
-    },
-    {
-      "label": "Run full tests (background)",
-      "type": "shell",
-      "command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
-      "args": ["-m", "pytest", "-q"],
-      "isBackground": true,
-      "group": "build"
-    },
-    {
-      "label": "Run all tests now",
-      "type": "shell",
-      "command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
-      "args": ["-m", "pytest", "-q"],
-      "isBackground": false,
-      "group": "build"
-    },
-    {
-      "label": "Lint (ruff)",
-      "type": "shell",
-      "command": "python -m ruff check .",
-      "problemMatcher": "$python"
-    },
-    {
-      "label": "Format (black)",
-      "type": "shell",
-      "command": "python -m black ."
-    },
-    {
-      "label": "Type check (mypy light)",
-      "type": "shell",
-      "command": "python -m mypy --config-file mypy.ini src/core src/policy tests",
-      "problemMatcher": "$python"
-    },
-    {
-      "label": "Export monthly report (CLI)",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": [
-        "scripts/export_monthly_report.py",
-        "--logs",
-        "logs/executions.parquet",
-        "logs/trades.parquet"
-      ]
-    },
-    {
-      "label": "Export period report (CLI)",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": [
-        "scripts/export_periodic_report.py",
-        "--logs",
-        "logs/executions.parquet",
-        "logs/trades.parquet",
-        "--start",
-        "2025-01-01",
-        "--end",
-        "2025-01-31"
-      ]
-    },
-    {
-      "label": "Export weekly report (THIS WEEK)",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": [
-        "scripts/export_weekly_report.py",
-        "--logs",
-        "logs/executions.parquet",
-        "logs/trades.parquet",
-        "--which",
-        "this",
-        "--reasons-map",
-        "config/reasons_map.yml"
-      ]
-    },
-    {
-      "label": "Export weekly report (LAST WEEK)",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": [
-        "scripts/export_weekly_report.py",
-        "--logs",
-        "logs/executions.parquet",
-        "logs/trades.parquet",
-        "--which",
-        "last",
-        "--reasons-map",
-        "config/reasons_map.yml"
-      ]
-    },
-    {
-      "label": "Generate events.csv",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": [
-        "scripts/make_events_csv.py",
-        "--in",
-        "config/events.yml",
-        "--out",
-        "data/events.csv"
-      ]
-    },
-    {
-      "label": "Quick Streamlit run",
-      "type": "shell",
-      "command": "streamlit run app.py"
-    },
-    {
-      "label": "Quick checks (lint → mypy → fast tests)",
-      "type": "shell",
-      "command": "python -m ruff check . && python -m mypy --config-file mypy.ini src/core src/policy tests && python -m pytest -q -k \"fast or safety or filters or pipeline or observability\""
-    },
-    {
-      "label": "Health check (1d)",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": [
-        "scripts/health_check.py",
-        "--logs",
-        "logs/executions.parquet",
-        "--days",
-        "1",
-        "--max-block-rate",
-        "0.8",
-        "--max-unknown-ratio",
-        "0.3",
-        "--reasons-map",
-        "config/reasons_map.yml"
-      ],
-      "problemMatcher": "$python"
-    },
-    {
-      "label": "Health (with drift example)",
-      "type": "shell",
-      "command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
-      "args": [
-        "scripts/health_check.py",
-        "--logs",
-        "logs/executions.parquet",
-        "--days",
-        "1",
-        "--max-block-rate",
-        "0.8",
-        "--max-unknown-ratio",
-        "0.3",
-        "--reasons-map",
-        "config/reasons_map.yml",
-        "--drift-source",
-        "data/USDJPY_15m.csv",
-        "--drift-column",
-        "close",
-        "--drift-ref-n",
-        "2000",
-        "--drift-cur-n",
-        "500",
-        "--drift-bins",
-        "20",
-        "--max-drift-psi",
-        "0.5",
-        "--max-drift-js",
-        "0.3"
-      ],
-      "problemMatcher": "$python"
-    },
-    {
-      "label": "Pre-commit checks",
-      "type": "shell",
-      "command": "python -c \"print('ready')\"",
-      "dependsOn": [
-        "Lint (ruff)",
-        "Type check (mypy light)",
-        "Run fast tests"
-      ],
-      "dependsOrder": "sequence"
-    },
-    {
-      "label": "Streamlit (safe mode: paper+kill)",
-      "type": "shell",
-      "command": "streamlit run app.py",
-      "options": {
-        "env": {
-          "MODE": "paper",
-          "KILL_SWITCH": "1"
-        }
-      }
-    },
-    {
-      "label": "Patterns: grid (LDN/NY)",
-      "type": "shell",
-      "command": "python scripts/patterns_grid.py data/USDJPY_15m.csv",
-      "group": "build",
-      "problemMatcher": "$python"
-    },
-    {
-      "label": "Patterns: grid (Triangle LDN/NY)",
-      "type": "shell",
-      "command": "python",
-      "args": [
-        "scripts/patterns_grid.py",
-        "--pattern",
-        "triangle",
-        "${input:patternDataPath}"
-      ],
-      "problemMatcher": "$python",
-      "group": "build"
-    },
-    {
-      "label": "Patterns: grid (Rectangle LDN/NY)",
-      "type": "shell",
-      "command": "python",
-      "args": [
-        "scripts/patterns_grid.py",
-        "--pattern",
-        "rectangle",
-        "${input:patternDataPath}"
-      ],
-      "problemMatcher": "$python",
-      "group": "build"
-    },
-    {
-      "label": "Patterns: grid (AsiaBox LDN/NY)",
-      "type": "shell",
-      "command": "python",
-      "args": [
-        "scripts/patterns_grid.py",
-        "--pattern",
-        "asia_box",
-        "${input:patternDataPath}"
-      ],
-      "problemMatcher": "$python",
-      "group": "build"
-    },
-    {
-      "label": "Patterns: emit thresholds (from summary)",
-      "type": "shell",
-      "command": "python scripts/emit_quality_thresholds.py --summary ${input:summaryPath} --sessions \"London,NewYork\" --tokyo-thr 0.10 --out config/patterns_quality_thresholds.yml --force",
-      "problemMatcher": "$python"
-    }
-  ],
-  "inputs": [
-    {
-      "id": "summaryPath",
-      "type": "promptString",
-      "description": "Path to patterns_grid summary.csv (e.g., reports/patterns_grid_YYYYMMDD/summary.csv)",
-      "default": "reports/patterns_grid_YYYYMMDD/summary.csv"
-    },
-    {
-      "id": "patternDataPath",
-      "type": "promptString",
-      "description": "Path to input CSV/Parquet (default: data/USDJPY_15m.csv)",
-      "default": "data/USDJPY_15m.csv"
-    }
-  ]
+	"version": "2.0.0",
+	"options": {
+		"env": {
+			"PYTHONPATH": "."
+		}
+	},
+	"tasks": [
+		{
+			"label": "Install requirements",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pip",
+				"install",
+				"-r",
+				"requirements.txt"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Run daily jobs",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\scripts\\run_daily_jobs.cmd",
+			"args": [],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Run tests",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Run fast tests",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q",
+				"-k",
+				"app_smoke or risk_guard or metrics_smoke or baseline_loader or ev_utils or time_utils"
+			],
+			"isBackground": false,
+			"group": "build",
+			"problemMatcher": "$python"
+		},
+		{
+			"label": "Run full tests (background)",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "Run all tests now",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\env\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Lint (ruff)",
+			"type": "shell",
+			"command": "python -m ruff check .",
+			"problemMatcher": "$python"
+		},
+		{
+			"label": "Format (black)",
+			"type": "shell",
+			"command": "python -m black ."
+		},
+		{
+			"label": "Type check (mypy light)",
+			"type": "shell",
+			"command": "python -m mypy --config-file mypy.ini src/core src/policy tests",
+			"problemMatcher": "$python"
+		},
+		{
+			"label": "Export monthly report (CLI)",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/export_monthly_report.py",
+				"--logs",
+				"logs/executions.parquet",
+				"logs/trades.parquet"
+			]
+		},
+		{
+			"label": "Export period report (CLI)",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/export_periodic_report.py",
+				"--logs",
+				"logs/executions.parquet",
+				"logs/trades.parquet",
+				"--start",
+				"2025-01-01",
+				"--end",
+				"2025-01-31"
+			]
+		},
+		{
+			"label": "Export weekly report (THIS WEEK)",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/export_weekly_report.py",
+				"--logs",
+				"logs/executions.parquet",
+				"logs/trades.parquet",
+				"--which",
+				"this",
+				"--reasons-map",
+				"config/reasons_map.yml"
+			]
+		},
+		{
+			"label": "Export weekly report (LAST WEEK)",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/export_weekly_report.py",
+				"--logs",
+				"logs/executions.parquet",
+				"logs/trades.parquet",
+				"--which",
+				"last",
+				"--reasons-map",
+				"config/reasons_map.yml"
+			]
+		},
+		{
+			"label": "Generate events.csv",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/make_events_csv.py",
+				"--in",
+				"config/events.yml",
+				"--out",
+				"data/events.csv"
+			]
+		},
+		{
+			"label": "Quick Streamlit run",
+			"type": "shell",
+			"command": "streamlit run app.py"
+		},
+		{
+			"label": "Quick checks (lint → mypy → fast tests)",
+			"type": "shell",
+			"command": "python -m ruff check . && python -m mypy --config-file mypy.ini src/core src/policy tests && python -m pytest -q -k \"fast or safety or filters or pipeline or observability\""
+		},
+		{
+			"label": "Health check (1d)",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/health_check.py",
+				"--logs",
+				"logs/executions.parquet",
+				"--days",
+				"1",
+				"--max-block-rate",
+				"0.8",
+				"--max-unknown-ratio",
+				"0.3",
+				"--reasons-map",
+				"config/reasons_map.yml"
+			],
+			"problemMatcher": "$python"
+		},
+		{
+			"label": "Health (with drift example)",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/health_check.py",
+				"--logs",
+				"logs/executions.parquet",
+				"--days",
+				"1",
+				"--max-block-rate",
+				"0.8",
+				"--max-unknown-ratio",
+				"0.3",
+				"--reasons-map",
+				"config/reasons_map.yml",
+				"--drift-source",
+				"data/USDJPY_15m.csv",
+				"--drift-column",
+				"close",
+				"--drift-ref-n",
+				"2000",
+				"--drift-cur-n",
+				"500",
+				"--drift-bins",
+				"20",
+				"--max-drift-psi",
+				"0.5",
+				"--max-drift-js",
+				"0.3"
+			],
+			"problemMatcher": "$python"
+		},
+		{
+			"label": "Pre-commit checks",
+			"type": "shell",
+			"command": "python -c \"print('ready')\"",
+			"dependsOn": [
+				"Lint (ruff)",
+				"Type check (mypy light)",
+				"Run fast tests"
+			],
+			"dependsOrder": "sequence"
+		},
+		{
+			"label": "Streamlit (safe mode: paper+kill)",
+			"type": "shell",
+			"command": "streamlit run app.py",
+			"options": {
+				"env": {
+					"MODE": "paper",
+					"KILL_SWITCH": "1"
+				}
+			}
+		},
+		{
+			"label": "Patterns: grid (LDN/NY)",
+			"type": "shell",
+			"command": "python scripts/patterns_grid.py data/USDJPY_15m.csv",
+			"group": "build",
+			"problemMatcher": "$python"
+		},
+		{
+			"label": "Patterns: grid (Triangle LDN/NY)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"scripts/patterns_grid.py",
+				"--pattern",
+				"triangle",
+				"${input:patternDataPath}"
+			],
+			"problemMatcher": "$python",
+			"group": "build"
+		},
+		{
+			"label": "Patterns: grid (Rectangle LDN/NY)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"scripts/patterns_grid.py",
+				"--pattern",
+				"rectangle",
+				"${input:patternDataPath}"
+			],
+			"problemMatcher": "$python",
+			"group": "build"
+		},
+		{
+			"label": "Patterns: grid (AsiaBox LDN/NY)",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"scripts/patterns_grid.py",
+				"--pattern",
+				"asia_box",
+				"${input:patternDataPath}"
+			],
+			"problemMatcher": "$python",
+			"group": "build"
+		},
+		{
+			"label": "Patterns: emit thresholds (from summary)",
+			"type": "shell",
+			"command": "python scripts/emit_quality_thresholds.py --summary ${input:summaryPath} --sessions \"London,NewYork\" --tokyo-thr 0.10 --out config/patterns_quality_thresholds.yml --force",
+			"problemMatcher": "$python"
+		},
+		{
+			"label": "Benchmark rectangle",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/benchmark_rectangle.py",
+				"--repeat",
+				"2"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Optimize flag/pennant (15m LDN/NY)",
+			"type": "shell",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"scripts/optimize_flag_pennant_15m.py",
+				"--data",
+				"data/USDJPY_15m.csv",
+				"--out",
+				"reports/opt_flag_pennant_15m"
+			],
+			"isBackground": false,
+			"group": "build"
+		}
+	],
+	"inputs": [
+		{
+			"id": "summaryPath",
+			"type": "promptString",
+			"description": "Path to patterns_grid summary.csv (e.g., reports/patterns_grid_YYYYMMDD/summary.csv)",
+			"default": "reports/patterns_grid_YYYYMMDD/summary.csv"
+		},
+		{
+			"id": "patternDataPath",
+			"type": "promptString",
+			"description": "Path to input CSV/Parquet (default: data/USDJPY_15m.csv)",
+			"default": "data/USDJPY_15m.csv"
+		}
+	]
 }

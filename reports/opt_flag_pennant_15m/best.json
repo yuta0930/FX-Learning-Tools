@@ -1,0 +1,19 @@
+{
+  "best": {
+    "lookback": 1000.0,
+    "n_push": 24.0,
+    "min_flag_bars": 8.0,
+    "max_flag_bars": 40.0,
+    "sigma_k": 1.2,
+    "pole_min_atr": 3.5,
+    "flag_slope_max_atr": 0.1,
+    "contraction_percentile": 0.1,
+    "n_signals": 169.0,
+    "hit_rate": 0.5325443786982249,
+    "ev_R": 0.00037275863027500146
+  },
+  "constraints": {
+    "min_signals": 40,
+    "min_hit": 0.45
+  }
+}

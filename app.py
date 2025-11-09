@@ -112,6 +112,7 @@ def calc_psi_and_exrate(curr_probs, baseline_probs, theta_up, theta_dn):
     return psi_val, sev, ex_rate, kl, js, hell
 # （削除）重複していた __main__ テストブロックは冗長のため整理しました。
 from monitoring import compute_psi, psi_severity, threshold_exceed_rate, healthcheck, safe_call, drift_summary
+from joblib import Parallel, delayed
 ## --- 発注の最終ゲートに enable_trading を反映 ---
 # pred_df, windows_dfが揃ったタイミングで以下を必ず通す
 # pred_df: [timestamp, proba, theta, signal, ...]
@@ -3948,6 +3949,7 @@ def detect_triangles(
     flat_tol_norm: float = 0.0012,
     converge_min: float = 0.20,
     width_max_atr: float = 3.5,
+    contraction_max_ratio: float = 1.10,
     r2_min: float = 0.20,
     parallel_tol: float = 0.22,
     breakout_buffer_atr: float = 0.25,
@@ -3958,11 +3960,13 @@ def detect_triangles(
     e_step: int = 2,
     len_step: int = 2,
 ) -> List[Dict]:
-
+    """高精度三角形検出（整備版）
+    - 収束, R², 幅, ATR収縮, ピボット数によるフィルタ
+    - ブレイク未確定パターン表示を許容 (require_breakout=False)
+    - インストゥルメンテーション counters を session_state['triangle_stats'] に格納
+    """
     if any(c not in df.columns for c in [high_col, low_col, close_col]):
         raise ValueError("DataFrame must have high/low/close columns")
-
-    # 1) 直近N本だけ見る
     if last_N is not None and len(df) > last_N:
         df = df.iloc[-last_N:]
 
@@ -3976,111 +3980,113 @@ def detect_triangles(
     atr = _atr(highs, lows, close, window=atr_window)
     is_h, _ = _pivots(highs, pivot_lb, pivot_ub)
     _, is_l = _pivots(lows,  pivot_lb, pivot_ub)
-    patterns: List[Dict] = []
 
-    # 事前トレンド計算関数
-    def _pretrend_slope(end_idx, win: int) -> float:
-        j1 = max(0, end_idx - cons_min_bars)  # 三角開始前付近を狙う
-        j0 = max(0, j1 - win)
-        if j1 - j0 < 5: return 0.0
-        x = np.arange(j1-j0+1, dtype=float)
-        y = close[j0:j1+1]
-        xm, ym = x.mean(), y.mean()
-        den = ((x-xm)**2).sum()
-        if den <= 0: return 0.0
-        return float(((x-xm)*(y-ym)).sum()/den)
+    # instrumentation counters
+    counters = {
+        "fail_width_raw": 0,
+        "fail_atr_cons": 0,
+        "fail_pivots": 0,
+        "fail_r2": 0,
+        "fail_width_e": 0,
+        "fail_converge": 0,
+        "fail_type": 0,
+        "accepted": 0,
+        "loops_e": 0,
+        "len_trials": 0,
+    }
 
-    # ブレイク確定チェック
-    def _confirm_break(e_idx: int, dir_side: str, m_up, b_up, m_lo, b_lo) -> Tuple[bool, Optional[int], float, float]:
-        """dir_side: 'up' or 'down'; 戻り: (確定?, 確定バーidx, entry_price, stop_suggest)"""
-        seq = 0
-        j = e_idx
-        while j < n:
+    def _pretrend_slope(end_idx: int, win: int) -> float:
+        start = max(0, end_idx - win)
+        xs = np.arange(start, end_idx+1, dtype=float)
+        ys = close[start:end_idx+1]
+        if len(xs) < 2:
+            return 0.0
+        xm, ym = xs.mean(), ys.mean()
+        den = ((xs - xm)**2).sum()
+        if den <= 0:
+            return 0.0
+        return float(((xs - xm) * (ys - ym)).sum() / den)
+
+    def _confirm_break(e_idx: int, dir_side: str, m_up: float, b_up: float, m_lo: float, b_lo: float) -> Tuple[bool, Optional[int], float, float]:
+        j = e_idx + 1
+        while j < n and j - e_idx <= confirm_bars:
             up_y = _line_y(m_up, b_up, j)
             lo_y = _line_y(m_lo, b_lo, j)
-            thr = breakout_buffer_atr * atr[j]
             c = close[j]
+            thr = breakout_buffer_atr * atr[j]
             if dir_side == "up":
-                ok = (c >= up_y + thr)
+                if c > up_y + thr:
+                    entry = max(up_y + thr, c)
+                    stop = lo_y - 0.25 * atr[j]
+                    return True, j, float(entry), float(stop)
             else:
-                ok = (c <= lo_y - thr)
-            seq = seq + 1 if ok else 0
-            if seq >= max(1, int(confirm_bars)):
-                # entry/stop（候補）
-                if dir_side == "up":
-                    entry = max(up_y + thr, c)  # 終値確定時点の価格を優先
-                    stop  = lo_y - 0.25 * atr[j]
-                else:
+                if c < lo_y - thr:
                     entry = min(lo_y - thr, c)
-                    stop  = up_y + 0.25 * atr[j]
-                return True, j, float(entry), float(stop)
-            # 直近数本のみ確認（無限ループ回避）
-            if j - e_idx > 3: break
+                    stop = up_y + 0.25 * atr[j]
+                    return True, j, float(entry), float(stop)
             j += 1
         return False, None, np.nan, np.nan
 
-
-    # 2) ストライド
+    patterns: List[Dict] = []
+    min_pivot_points = 3
     for e in range(atr_window + cons_min_bars, n, e_step):
-        best = None  # (quality, dict)
-        # 複数長さで探索し、最良だけ採用
-        min_pivot_points = 3
-        for cons_len in range(cons_min_bars, cons_max_bars+1, len_step):
+        counters["loops_e"] += 1
+        best: Optional[Tuple[float, Dict]] = None
+        for cons_len in range(cons_min_bars, cons_max_bars + 1, len_step):
+            counters["len_trials"] += 1
             s = e - cons_len + 1
             if s < atr_window:
                 continue
 
-            # 3) 事前フィルタ（回帰前の早落とし）
+            # raw width early filter
             width_raw = highs[s:e+1].max() - lows[s:e+1].min()
             if width_raw > width_max_atr * atr[e] * 1.5:
+                counters["fail_width_raw"] += 1
                 continue
-            atr_cons = atr[s:e+1].mean(); atr_prev = atr[max(s-14,0):s].mean()
-            if atr_cons > atr_prev * 0.95:
+
+            atr_cons = atr[s:e+1].mean(); atr_prev = atr[max(s-14, 0):s].mean()
+            if atr_cons > atr_prev * contraction_max_ratio:
+                counters["fail_atr_cons"] += 1
                 continue
 
             idxs = np.arange(s, e+1)
             hi_idx = idxs[is_h[s:e+1]]
             lo_idx = idxs[is_l[s:e+1]]
-
-            # ピボットが足りない場合は極値で補完
             if len(hi_idx) < min_pivot_points or len(lo_idx) < min_pivot_points:
                 k = min(6, len(idxs))
-                if k < min_pivot_points:
-                    continue
-                top_hi_idx = idxs[np.argsort(highs[s:e+1])[-k:]]
-                top_lo_idx = idxs[np.argsort(lows[s:e+1])[:k]]
-                hi_idx = np.sort(top_hi_idx[:max(min_pivot_points, len(top_hi_idx)//2)])
-                lo_idx = np.sort(top_lo_idx[:max(min_pivot_points, len(top_lo_idx)//2)])
+                if k >= min_pivot_points:
+                    top_hi_idx = idxs[np.argsort(highs[s:e+1])[-k:]]
+                    top_lo_idx = idxs[np.argsort(lows[s:e+1])[:k]]
+                    hi_idx = np.sort(top_hi_idx[:max(min_pivot_points, len(top_hi_idx)//2)])
+                    lo_idx = np.sort(top_lo_idx[:max(min_pivot_points, len(top_lo_idx)//2)])
             if len(hi_idx) < min_pivot_points or len(lo_idx) < min_pivot_points:
+                counters["fail_pivots"] += 1
                 continue
 
             uh_slope, uh_inter, uh_r2 = _fit_line(hi_idx, highs[hi_idx])
             lh_slope, lh_inter, lh_r2 = _fit_line(lo_idx, lows[lo_idx])
-
             price_scale = close[s:e+1].mean()
             uh_n = _norm_slope(uh_slope, price_scale)
             lh_n = _norm_slope(lh_slope, price_scale)
-
-            # 当てはまり最低限
-            if (uh_r2 + lh_r2)/2.0 < r2_min:
+            if (uh_r2 + lh_r2) / 2.0 < r2_min:
+                counters["fail_r2"] += 1
                 continue
 
-            # 開始幅と終了幅（収束チェック）
             width_s = _line_y(uh_slope, uh_inter, s) - _line_y(lh_slope, lh_inter, s)
             width_e = _line_y(uh_slope, uh_inter, e) - _line_y(lh_slope, lh_inter, e)
             if width_s <= 0 or width_e <= 0:
+                counters["fail_width_e"] += 1
                 continue
-            # 幅が馬鹿デカいものを弾く（終盤幅）
             if width_e > width_max_atr * atr[e]:
+                counters["fail_width_e"] += 1
                 continue
 
-            # 収束率（どれだけ狭まったか）: (width_s - width_e)/width_s
             converge = (width_s - width_e) / max(width_s, 1e-9)
             if converge < converge_min:
+                counters["fail_converge"] += 1
                 continue
 
-            # 型判定（閾値パラメータ化）
-            tri_type = None
+            tri_type: Optional[str] = None
             flat_thr = flat_tol_norm
             parallel_thr = parallel_tol
             if abs(uh_n) <= flat_thr and lh_n > flat_thr:
@@ -4088,75 +4094,57 @@ def detect_triangles(
             elif abs(lh_n) <= flat_thr and uh_n < -flat_thr:
                 tri_type = "descending_triangle"
             else:
-                if np.sign(uh_n) != np.sign(lh_n) and np.sign(uh_n)!=0 and np.sign(lh_n)!=0:
+                if np.sign(uh_n) != np.sign(lh_n) and np.sign(uh_n) != 0 and np.sign(lh_n) != 0:
                     rel = abs(abs(uh_n) - abs(lh_n)) / max(abs(uh_n), abs(lh_n), 1e-9)
                     if rel <= parallel_thr:
                         tri_type = "sym_triangle"
             if tri_type is None:
+                counters["fail_type"] += 1
                 continue
 
-            # 事前トレンド（上昇/下降/中立で加点）
             pre_slope = _pretrend_slope(e, pretrend_win)
-            pre_bias = 0.0
-            if tri_type == "ascending_triangle":
-                pre_bias = 1.0 if pre_slope > 0 else 0.0
-            elif tri_type == "descending_triangle":
-                pre_bias = 1.0 if pre_slope < 0 else 0.0
-            else:
-                pre_bias = 0.5  # 中立
+            pre_bias = 1.0 if (tri_type == "ascending_triangle" and pre_slope > 0) else \
+                       1.0 if (tri_type == "descending_triangle" and pre_slope < 0) else \
+                       0.5
 
-            # ブレイク確定（任意）
-            breakout_idx = None
-            entry = np.nan
-            stop  = np.nan
-            target= np.nan
-            broken = False
-            # 方向仮定
-            if tri_type == "ascending_triangle":
-                expect = "up"
-            elif tri_type == "descending_triangle":
-                expect = "down"
-            else:
-                # シンメトリカルは「直近の終値位置」で暫定方向を仮定
-                mid_y = (_line_y(uh_slope, uh_inter, e) + _line_y(lh_slope, lh_inter, e)) * 0.5
-                expect = "up" if close[e] >= mid_y else "down"
+            expect = "up" if tri_type == "ascending_triangle" else \
+                     "down" if tri_type == "descending_triangle" else (
+                         "up" if close[e] >= ( (_line_y(uh_slope, uh_inter, e) + _line_y(lh_slope, lh_inter, e)) * 0.5 ) else "down"
+                     )
 
-            # ブレイク確認
-            broken, b_idx, entry_cand, stop_cand = _confirm_break(
-                e, expect, uh_slope, uh_inter, lh_slope, lh_inter
-            )
-            if broken:
-                breakout_idx = b_idx
-                entry = entry_cand
-                stop  = stop_cand
+            broken, b_idx, entry_cand, stop_cand = _confirm_break(e, expect, uh_slope, uh_inter, lh_slope, lh_inter)
+            breakout_idx = b_idx if broken else None
+            entry = entry_cand if broken else np.nan
+            stop = stop_cand if broken else np.nan
 
-            # ターゲット（測定幅＝開始幅をベース）
             height = width_s
-            if not np.isnan(entry):
-                target = entry + height if expect == "up" else entry - height
-            else:
-                # 未確定でもライン際の参考値
+            if not broken:
+                # forming fallback levels
                 up_e = _line_y(uh_slope, uh_inter, e)
                 lo_e = _line_y(lh_slope, lh_inter, e)
                 entry = up_e if expect == "up" else lo_e
-                stop  = lo_e - 0.25*atr[e] if expect == "up" else up_e + 0.25*atr[e]
-                target= entry + height if expect == "up" else entry - height
+                stop = lo_e - 0.25 * atr[e] if expect == "up" else up_e + 0.25 * atr[e]
+            target = entry + height if expect == "up" else entry - height
 
-            # 品質スコア（タッチ数・収束率重視）
-            fit_q   = max(0.0, min(1.0, (uh_r2 + lh_r2)/2.0))
-            conv_q  = max(0.0, min(1.0, (converge - converge_min) / max(1e-9, 1.0 - converge_min)))
-            flat_q  = 1.0 - min(1.0, abs(uh_n)/flat_thr) if tri_type=="ascending_triangle" else \
-                      1.0 - min(1.0, abs(lh_n)/flat_thr) if tri_type=="descending_triangle" else \
-                      1.0 - min(1.0, abs(abs(uh_n)-abs(lh_n))/max(abs(uh_n),abs(lh_n),1e-9))
-            # タッチ数で加点（最低3点以上で0.5、5点以上で1.0）
+            fit_q = max(0.0, min(1.0, (uh_r2 + lh_r2) / 2.0))
+            conv_q = max(0.0, min(1.0, (converge - converge_min) / max(1e-9, 1.0 - converge_min)))
+            if tri_type == "ascending_triangle":
+                flat_q = 1.0 - min(1.0, abs(uh_n) / flat_thr)
+            elif tri_type == "descending_triangle":
+                flat_q = 1.0 - min(1.0, abs(lh_n) / flat_thr)
+            else:
+                flat_q = 1.0 - min(1.0, abs(abs(uh_n) - abs(lh_n)) / max(abs(uh_n), abs(lh_n), 1e-9))
             touch_score = min(len(hi_idx), len(lo_idx))
-            touch_q = min(1.0, (touch_score-2)/3.0)
-            pre_q   = pre_bias
-            quality = float(np.clip(0.25*fit_q + 0.35*conv_q + 0.15*flat_q + 0.15*touch_q + 0.10*pre_q, 0, 1))
+            touch_q = min(1.0, (touch_score - 2) / 3.0)
+            pre_q = pre_bias
+            quality = float(np.clip(0.25 * fit_q + 0.35 * conv_q + 0.15 * flat_q + 0.15 * touch_q + 0.10 * pre_q, 0, 1))
+
+            if require_breakout and breakout_idx is None:
+                continue
 
             pat = {
                 "type": tri_type,
-                "dir": "bull" if expect=="up" else "bear",
+                "dir": "bull" if expect == "up" else "bear",
                 "start_idx": int(s),
                 "end_idx": int(e),
                 "breakout_idx": int(breakout_idx) if breakout_idx is not None else None,
@@ -4172,19 +4160,20 @@ def detect_triangles(
                 "stop": float(stop),
                 "target": float(target),
             }
-
-            # require_breakoutの挙動明確化
-            if require_breakout and breakout_idx is None:
-                continue
-
-            # 同一終端eで最良だけ採用
             cand = (quality, pat)
             if best is None or cand[0] > best[0]:
                 best = cand
 
         if best is not None:
             patterns.append(best[1])
+            counters["accepted"] += 1
 
+    # export stats
+    try:
+        import streamlit as _st
+        _st.session_state['triangle_stats'] = counters
+    except Exception:
+        pass
     return patterns
 
 def detect_triangles_df(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
@@ -4288,9 +4277,14 @@ def detect_rectangles(
     confirm_bars: int = 1,             # ブレイク終値の連続確定本数
     require_breakout: bool = False,    # Trueなら確定のみ採用
     # 速度対策
-    last_N: Optional[int] = 3000,      # 直近N本に限定
-    e_step: int = 1,                   # 終端のステップ
-    len_step: int = 1,                 # 窓長のステップ
+    last_N: Optional[int] = 2000,      # 直近N本に限定（軽量化のため既定を2000に）
+    e_step: int = 3,                   # 終端のステップ（3本刻みで高速化）
+    len_step: int = 2,                 # 窓長のステップ（2本刻み）
+    enable_low_pivot_fallback: bool = True,  # ピボット不足時の軽量補完（argpartition）
+    use_parallel: bool = False,
+    n_jobs: int = -1,
+    parallel_backend: str = "threads",
+    parallel_batch_size: int = 16,
 ) -> List[Dict]:
     if any(c not in df.columns for c in [high_col, low_col, close_col]):
         raise ValueError("DataFrame must have high/low/close columns")
@@ -4305,62 +4299,40 @@ def detect_rectangles(
     if n < max(atr_window + win_max_bars + 5, 80):
         return []
 
-    atr = _atr(highs, lows, close, window=atr_window)
-    is_h, _ = _pivots(highs, pivot_lb, pivot_ub)
-    _, is_l = _pivots(lows,  pivot_lb, pivot_ub)
-
-    patterns: List[Dict] = []
-
-    def _confirm_break(e_idx: int, side: str, m_up, b_up, m_lo, b_lo):
-        """side: 'up'|'down'"""
-        seq = 0
-        j = e_idx
-        while j < n:
-            up = _line_y(m_up, b_up, j)
-            lo = _line_y(m_lo, b_lo, j)
-            thr = breakout_buffer_atr * atr[j]
-            c = close[j]
-            ok = (c >= up + thr) if side == "up" else (c <= lo - thr)
-            seq = seq + 1 if ok else 0
-            if seq >= max(1,int(confirm_bars)):
-                entry = max(up+thr, c) if side=="up" else min(lo-thr, c)
-                stop  = lo - 0.25*atr[j] if side=="up" else up + 0.25*atr[j]
-                return True, j, float(entry), float(stop)
-            if j - e_idx > 3: break
-            j += 1
-        return False, None, np.nan, np.nan
-
-    for e in range(atr_window + win_min_bars, n, e_step):
-        best = None  # (quality, dict)
+    def _eval_e(e: int):
+        best_local = None
         for L in range(win_min_bars, win_max_bars+1, len_step):
             s = e - L + 1
-            if s < atr_window: 
+            if s < atr_window:
                 continue
-            idxs = np.arange(s, e+1)
-
-            # ピボット抽出
-            hi_idx = idxs[is_h[s:e+1]]
-            lo_idx = idxs[is_l[s:e+1]]
-            # タッチ不足なら極値補完（軽量）
-            if len(hi_idx) < 2 or len(lo_idx) < 2:
-                k = min(4, len(idxs))
-                if k < 2: 
+            h_cnt = int(H_cum[e+1] - H_cum[s])
+            l_cnt = int(L_cum[e+1] - L_cum[s])
+            idx_range = np.arange(s, e+1)
+            window_mask = slice(s, e+1)
+            hi_idx = idx_range[is_h[window_mask]]
+            lo_idx = idx_range[is_l[window_mask]]
+            if (h_cnt < 2 or l_cnt < 2):
+                if not enable_low_pivot_fallback:
                     continue
-                top_hi = idxs[np.argsort(highs[s:e+1])[-k:]]
-                bot_lo = idxs[np.argsort(lows[s:e+1])[:k]]
-                hi_idx = np.sort(top_hi[:max(2, len(top_hi)//2)])
-                lo_idx = np.sort(bot_lo[:max(2, len(bot_lo)//2)])
+                k = min(4, len(idx_range))
+                if k < 2:
+                    continue
+                sub_high = highs[s:e+1]
+                part_hi = np.argpartition(sub_high, -k)[-k:]
+                sub_low = lows[s:e+1]
+                part_lo = np.argpartition(sub_low, k-1)[:k]
+                hi_idx = np.sort(idx_range[part_hi])[:max(2, len(part_hi)//2)]
+                lo_idx = np.sort(idx_range[part_lo])[:max(2, len(part_lo)//2)]
+                if len(hi_idx) < 2 or len(lo_idx) < 2:
+                    continue
 
-            # 線当て
             uh_s, uh_b, uh_r2 = _fit_line(hi_idx, highs[hi_idx])
             lh_s, lh_b, lh_r2 = _fit_line(lo_idx, lows[lo_idx])
 
-            price_scale = close[s:e+1].mean()
+            price_scale = float((close_cum[e+1] - close_cum[s]) / L)
             uh_n = _norm_slope(uh_s, price_scale)
             lh_n = _norm_slope(lh_s, price_scale)
             mid_n = _norm_slope((uh_s + lh_s)/2.0, price_scale)
-
-            # 水平度と当てはまり
             if abs(uh_n) > flat_tol_norm or abs(lh_n) > flat_tol_norm:
                 continue
             if (uh_r2 + lh_r2)/2.0 < r2_min:
@@ -4368,19 +4340,22 @@ def detect_rectangles(
             if abs(mid_n) > drift_tol_norm:
                 continue
 
-            # 幅と安定性
-            width = _line_y(uh_s, uh_b, idxs) - _line_y(lh_s, lh_b, idxs)
-            if np.any(width <= 0):
+            dm = (uh_s - lh_s)
+            db = (uh_b - lh_b)
+            w_s = dm * s + db
+            w_e = dm * e + db
+            if min(w_s, w_e) <= 0:
                 continue
-            w_mean = float(width.mean())
-            w_std  = float(width.std(ddof=0))
+            mean_i = 0.5 * (s + e)
+            var_i = (L*L - 1) / 12.0
+            w_mean = float(dm * mean_i + db)
+            w_std  = float(abs(dm) * np.sqrt(var_i))
             if w_mean > width_max_atr * atr[e]:
                 continue
             w_stab = (w_std / max(w_mean, 1e-9))
             if w_stab > width_stability_max:
                 continue
 
-            # タッチ判定（ライン±tolに入ったピボット数）
             tol = touch_tol_atr * atr[e]
             up_vals = _line_y(uh_s, uh_b, hi_idx)
             lo_vals = _line_y(lh_s, lh_b, lo_idx)
@@ -4389,26 +4364,21 @@ def detect_rectangles(
             if touch_up < min_touches_each or touch_lo < min_touches_each:
                 continue
 
-            # 期待方向は未確定。直近の位置で仮定（上半分→up、下半分→down）
-            up_e = float(_line_y(uh_s, uh_b, e))
-            lo_e = float(_line_y(lh_s, lh_b, e))
+            up_e = float(uh_s * e + uh_b)
+            lo_e = float(lh_s * e + lh_b)
             mid_e = (up_e + lo_e) * 0.5
             expect = "up" if close[e] >= mid_e else "down"
 
-            # ブレイク確認（任意）
             broken, b_idx, entry, stop = _confirm_break(e, expect, uh_s, uh_b, lh_s, lh_b)
             if require_breakout and not broken:
                 continue
 
-            # ターゲット＝レンジ高（開始幅 or 平均幅）
-            height = float(width[0])  # 開始幅
+            height = float(w_s)
             if np.isnan(entry):
-                # 未確定でも参考値（ライン際）
                 entry = up_e if expect=="up" else lo_e
                 stop  = lo_e - 0.25*atr[e] if expect=="up" else up_e + 0.25*atr[e]
             target = entry + height if expect=="up" else entry - height
 
-            # 品質スコア（0–1）
             fit_q   = max(0.0, min(1.0, (uh_r2 + lh_r2)/2.0))
             flat_q  = 1.0 - min(1.0, max(abs(uh_n), abs(lh_n)) / flat_tol_norm)
             stab_q  = 1.0 - min(1.0, w_stab / width_stability_max)
@@ -4418,7 +4388,7 @@ def detect_rectangles(
 
             pat = {
                 "type": "rectangle",
-                "dir": "bull" if expect=="up" else "bear",  # 期待方向（暫定／確定で上書き可）
+                "dir": "bull" if expect=="up" else "bear",
                 "start_idx": int(s),
                 "end_idx": int(e),
                 "breakout_idx": int(b_idx) if b_idx is not None else None,
@@ -4434,11 +4404,21 @@ def detect_rectangles(
             }
 
             cand = (quality, pat)
-            if best is None or cand[0] > best[0]:
-                best = cand
+            if best_local is None or cand[0] > best_local[0]:
+                best_local = cand
+        return best_local[1] if best_local is not None else None
 
-        if best is not None:
-            patterns.append(best[1])
+    e_indices = list(range(atr_window + win_min_bars, n, e_step))
+    if use_parallel and len(e_indices) >= max(32, (n_jobs if isinstance(n_jobs, int) and n_jobs > 0 else 4) * 4):
+        results = Parallel(n_jobs=n_jobs, prefer=("processes" if parallel_backend=="loky" else "threads"), batch_size=int(max(1, parallel_batch_size)))(
+            delayed(_eval_e)(e) for e in e_indices
+        )
+        patterns.extend([r for r in results if r is not None])
+    else:
+        for e in e_indices:
+            r = _eval_e(e)
+            if r is not None:
+                patterns.append(r)
 
     return patterns
 
@@ -4699,9 +4679,9 @@ def detect_asia_box_break(
     sl_buffer_min: float = 0.02,  # 2 pip
     sl_buffer_max: float = 0.05,  # 5 pip
     atr_window: int = 14,
-    min_range_pips: float = 0.15,     # 15 pip（USDJPY: 0.01=1pip）
-    min_range_atrK: float = 0.8,      # min Range >= max(0.15, ATR14*0.8)
-    max_range_atrK: float = 2.5,      # max Range <= ATR14*2.5
+    min_range_pips: float = 0.08,     # 8 pip（USDJPY: 0.01=1pip）
+    min_range_atrK: float = 0.45,     # min Range >= max(0.08, ATR14*0.45)
+    max_range_atrK: float = 8.0,      # max Range <= ATR14*8.0（実データ分布に合わせ緩和）
     wickiness_max: float = 0.6,
     vol_ratio_min: float = 0.8,       # 箱期間のATR14 / 直近20日メディアンATR
     news_block_minutes: int = 60,
@@ -4711,6 +4691,7 @@ def detect_asia_box_break(
     entry_modes: tuple[str,...] = ("close_break","retest_limit","stop_pending"),
     tz: str = "Asia/Tokyo",
     lookback_days: int = 5,
+    allow_low_quality_on_filter_fail: bool = False,
 ) -> list[Pattern]:
     """アジア時間のボックスを計算し、ロンドン前後のブレイクをパターン化。
     返り値は Pattern（kind: asia_box / asia_box_bull / asia_box_bear）。
@@ -4758,8 +4739,11 @@ def detect_asia_box_break(
         lower_wick = (body_min - low).clip(lower=0)
         denom = (high - low).replace(0, np.nan)
         wickiness = float(((upper_wick + lower_wick) / denom).mean()) if denom.notna().any() else 1.0
+        fail_reason = None
         if wickiness > float(wickiness_max):
-            return []
+            fail_reason = "wickiness"
+            if not allow_low_quality_on_filter_fail:
+                return []
 
         # ATR 指標
         pc = df2["close"].astype(float).shift(1)
@@ -4777,19 +4761,25 @@ def detect_asia_box_break(
         if np.isfinite(atr14_asia) and np.isfinite(atr14_med20d) and atr14_med20d > 0:
             vol_ratio = atr14_asia / atr14_med20d
             if vol_ratio < float(vol_ratio_min):
-                return []
+                fail_reason = fail_reason or "vol_ratio"
+                if not allow_low_quality_on_filter_fail:
+                    return []
 
         # Range フィルタ
         min_range = max(float(min_range_pips), float(min_range_atrK) * (atr14_asia if np.isfinite(atr14_asia) else 0.0))
         max_range = float(max_range_atrK) * (atr14_asia if np.isfinite(atr14_asia) else np.inf)
         if Range < min_range or Range > max_range:
-            return []
+            fail_reason = fail_reason or "range"
+            if not allow_low_quality_on_filter_fail:
+                return []
 
         # 前倒しブレイク（箱確定前に明確に外へ）
         pre = df2[(df2.index >= t_asia_start) & (df2.index < t_asia_end)]
         if not pre.empty:
             if (pre["close"] > AsiaHigh + break_buffer).any() or (pre["close"] < AsiaLow - break_buffer).any():
-                return []
+                fail_reason = fail_reason or "pre_break"
+                if not allow_low_quality_on_filter_fail:
+                    return []
 
         # ニュース抑制（±news_block_minutes）: windows_df が指定されていれば利用
         def _in_news(ts: pd.Timestamp) -> bool:
@@ -4815,8 +4805,11 @@ def detect_asia_box_break(
             open_start = pd.Timestamp(f"{day.date()} 15:45", tz=df2.index.tz)
             open_end   = pd.Timestamp(f"{day.date()} 17:45", tz=df2.index.tz)
 
-        # 現在値（直近バー）でのクローズ判定
-        last_row = df2.iloc[-1]
+        # 現在値（直近バー）でのクローズ判定（now_ts 以前の最新バーを採用）
+        cur_df = df2.loc[:now_ts] if now_ts is not None else df2
+        if cur_df.empty:
+            return []
+        last_row = cur_df.iloc[-1]
         last_ts: pd.Timestamp = last_row.name
         last_close = float(last_row["close"])
         in_window = (open_start <= last_ts <= open_end)
@@ -4835,8 +4828,8 @@ def detect_asia_box_break(
             "atr14_asia": float(atr14_asia) if np.isfinite(atr14_asia) else None,
         }
 
-        # ① クローズブレイク型
-        if "close_break" in entry_modes and in_window and not _in_news(last_ts):
+        # ① クローズブレイク型（低品質モードでは出さない）
+        if fail_reason is None and ("close_break" in entry_modes) and in_window and not _in_news(last_ts):
             if last_close > AsiaHigh + break_buffer:
                 entry = max(last_close, AsiaHigh + break_buffer)
                 sl = min(AsiaLow - sl_buffer_min, entry - max(sl_buffer_min, 0.8*(atr14_asia if np.isfinite(atr14_asia) else 0.0)))
@@ -4870,13 +4863,23 @@ def detect_asia_box_break(
         if "retest_limit" in entry_modes:
             bull_level = AsiaHigh + retest_offset
             bear_level = AsiaLow - retest_offset
-            patterns.append(Pattern(
-                kind="asia_box",
-                t_start=t_asia_start, t_end=t_asia_end,
-                params={**base_params, "mode":"retest_limit","buy_limit":bull_level,"sell_limit":bear_level},
-                quality=50.0,
-                direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
-            ))
+            if fail_reason is None:
+                patterns.append(Pattern(
+                    kind="asia_box",
+                    t_start=t_asia_start, t_end=t_asia_end,
+                    params={**base_params, "mode":"retest_limit","buy_limit":bull_level,"sell_limit":bear_level},
+                    quality=50.0,
+                    direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
+                ))
+            elif allow_low_quality_on_filter_fail:
+                params_lq = {**base_params, "mode":"retest_limit","buy_limit":bull_level,"sell_limit":bear_level, "low_quality": True, "filter_failed": fail_reason}
+                patterns.append(Pattern(
+                    kind="asia_box",
+                    t_start=t_asia_start, t_end=t_asia_end,
+                    params=params_lq,
+                    quality=30.0,
+                    direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
+                ))
 
         # ③ ストップ注文先置き型（指定時間内の条件）
         if "stop_pending" in entry_modes and in_window and not _in_news(last_ts):
@@ -4884,13 +4887,23 @@ def detect_asia_box_break(
             sell_stop = AsiaLow - break_buffer
             # 16:30（BST想定）までの期限の目安もメモ
             deadline = pd.Timestamp(f"{day.date()} 16:30", tz=df2.index.tz) if is_bst(day) else pd.Timestamp(f"{day.date()} 17:30", tz=df2.index.tz)
-            patterns.append(Pattern(
-                kind="asia_box",
-                t_start=open_start, t_end=open_end,
-                params={**base_params, "mode":"stop_pending","buy_stop":buy_stop,"sell_stop":sell_stop,"deadline":str(deadline)},
-                quality=55.0,
-                direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
-            ))
+            if fail_reason is None:
+                patterns.append(Pattern(
+                    kind="asia_box",
+                    t_start=open_start, t_end=open_end,
+                    params={**base_params, "mode":"stop_pending","buy_stop":buy_stop,"sell_stop":sell_stop,"deadline":str(deadline)},
+                    quality=55.0,
+                    direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
+                ))
+            elif allow_low_quality_on_filter_fail:
+                params_lq = {**base_params, "mode":"stop_pending","buy_stop":buy_stop,"sell_stop":sell_stop,"deadline":str(deadline), "low_quality": True, "filter_failed": fail_reason}
+                patterns.append(Pattern(
+                    kind="asia_box",
+                    t_start=open_start, t_end=open_end,
+                    params=params_lq,
+                    quality=35.0,
+                    direction_bias="up" if last_close >= (AsiaHigh+AsiaLow)/2 else "down"
+                ))
 
         return patterns
     except Exception as e:
@@ -5211,6 +5224,20 @@ enable_asia   = st.sidebar.checkbox("アジア箱ブレイク（ロンドン）"
 
 st.sidebar.subheader("パターンごとの直近本数")
 tri_lookback = st.sidebar.slider("トライアングル（対称/上昇/下降）", 20, 600, 125, 5)
+tri_quality_min = st.sidebar.number_input("三角形の最低品質(0-1)", value=0.50, step=0.05, min_value=0.0, max_value=1.0)
+tri_converge_min = st.sidebar.number_input("三角形: 最小収束率", value=0.20, step=0.02, min_value=0.0, max_value=0.9,
+    help="(幅始-幅終)/幅始。小さいほど緩く、多く検出されます")
+tri_r2_min = st.sidebar.number_input("三角形: 回帰R²の最低値", value=0.12, step=0.02, min_value=0.0, max_value=1.0)
+tri_width_max_atr = st.sidebar.number_input("三角形: 終盤幅の上限(ATR倍)", value=4.5, step=0.5, min_value=1.0, max_value=10.0,
+    help="終端幅が ATR×この倍率を超える候補は除外します。大きいほど緩くなります")
+tri_atr_ratio_max = st.sidebar.number_input("三角形: ATR収縮の上限比", value=1.10, step=0.05, min_value=0.7, max_value=1.5,
+    help="調整区間の ATR(平均) が直前の ATR(平均) に対して許される上限比。1.0 未満で“収縮のみ許可”、1.0 超で“微増も許容”")
+tri_allow_low_quality = st.sidebar.checkbox("三角形の低品質ヒントを表示", value=False,
+    help="最低品質しきい値に満たない候補(例: 0.40以上)も薄い破線で表示します")
+tri_show_stats = st.sidebar.checkbox("三角形フィルタ統計を表示", value=False,
+    help="検出に落ちた理由別カウンタ（幅/ATR/ピボット/R²/収束/型）を表示します")
+tri_show_forming = st.sidebar.checkbox("三角形: 形成中も積極表示", value=True,
+    help="ブレイク未確定でも候補を表示（品質しきい値に満たない場合は LowQ 破線）")
 rect_lookback = st.sidebar.slider("レクタングル（ボックス）", 20, 600, 150, 5)
 double_lookback = st.sidebar.slider("ダブルトップ/ダブルボトム", 20, 600, 75, 5)
 # — ダブルトップ／ダブルボトム 設定 —
@@ -5233,10 +5260,11 @@ asia_start_jst = st.sidebar.text_input("アジア開始(JST)", value="09:00")
 asia_end_jst   = st.sidebar.text_input("アジア終了(JST)", value="15:45")
 asia_break_buffer = st.sidebar.number_input("ブレイクバッファ(pip)", value=0.05, step=0.01)
 asia_wickiness_max = st.sidebar.slider("平均ヒゲ率の上限", 0.2, 0.9, 0.6, 0.05)
-asia_min_range_pips = st.sidebar.number_input("最小箱幅(USDJPY=0.01=1pip)", value=0.15, step=0.01)
-asia_min_range_atrK = st.sidebar.number_input("最小箱幅(ATR倍)", value=0.8, step=0.1)
-asia_max_range_atrK = st.sidebar.number_input("最大箱幅(ATR倍)", value=2.5, step=0.1)
+asia_min_range_pips = st.sidebar.number_input("最小箱幅(USDJPY=0.01=1pip)", value=0.08, step=0.01)
+asia_min_range_atrK = st.sidebar.number_input("最小箱幅(ATR倍)", value=0.45, step=0.05)
+asia_max_range_atrK = st.sidebar.number_input("最大箱幅(ATR倍)", value=8.0, step=0.5)
 asia_news_block_min = st.sidebar.slider("ニュース前後ノートレード(分)", 0, 120, 60, 5)
+asia_allow_low_quality = st.sidebar.checkbox("フィルタ不合格でもヒントを出す（低品質）", value=False, help="wickiness/ATR比/レンジ条件で落ちても、リテスト指値/先置きストップの候補を低品質で表示します")
 
 # Flag/Pennant パラメータ
 st.sidebar.caption("— フラッグ/ペナント 設定 —")
@@ -5256,27 +5284,37 @@ hs_tol = st.sidebar.slider("肩の高さ許容（比率）", 0.001, 0.02, 0.003,
 st.sidebar.markdown("---")
 st.sidebar.subheader("表示補助（パターン）")
 pattern_highlight_latest = st.sidebar.checkbox("最新検出の強調表示（vrect）", value=True)
+show_recent_asia = st.sidebar.checkbox("直近アジア高値/安値 (完了セッション) を表示", value=True,
+    help="当日セッションが未終了なら前営業日のアジア時間。終了後は当日分。データ不足なら最大7日前まで探索します。")
 
 patterns = []
-try:
-    double_patterns = []
-    # Triangle: 直接検出 -> Pattern化
-    if enable_tri:
+double_patterns = []
+
+# Triangle 検出（個別トライ）
+if enable_tri:
+    try:
         tri_pats = detect_triangles(
             df,
             high_col="high", low_col="low", close_col="close",
             atr_window=14,
             cons_min_bars=12, cons_max_bars=tri_lookback if 'tri_lookback' in locals() else 36,
             flat_tol_norm=0.0012,
-            converge_min=0.25,
-            width_max_atr=3.5,
-            breakout_buffer_atr=0.30,
+            converge_min=float(tri_converge_min),
+            width_max_atr=float(tri_width_max_atr),
+            contraction_max_ratio=float(tri_atr_ratio_max),
+            r2_min=float(tri_r2_min),
+            breakout_buffer_atr=0.25,
             confirm_bars=1,
             pretrend_win=24,
-            require_breakout=False,
+            require_breakout=not bool(tri_show_forming),
+            last_N=len(df),
         )
-        tri_pats = [p for p in tri_pats if float(p.get("quality_score", 0.0)) >= 0.55]
-        tri_top = sorted(tri_pats, key=lambda x: x.get("quality_score", 0.0), reverse=True)[:10]
+        hi_list = [p for p in tri_pats if float(p.get("quality_score", 0.0)) >= float(tri_quality_min)]
+        lo_thr = 0.30
+        lo_list = []
+        if bool(tri_allow_low_quality):
+            lo_list = [p for p in tri_pats if lo_thr <= float(p.get("quality_score", 0.0)) < float(tri_quality_min)]
+        tri_top = sorted(hi_list + lo_list, key=lambda x: x.get("quality_score", 0.0), reverse=True)[:10]
         for r in tri_top:
             s = int(r.get("start_idx")); e = int(r.get("end_idx"))
             tri_type = str(r.get("type", "sym_triangle"))
@@ -5293,6 +5331,7 @@ try:
                 entry=float(r.get("entry", np.nan)),
                 stop=float(r.get("stop", np.nan)),
                 target=float(r.get("target", np.nan)),
+                low_quality=(float(r.get("quality_score", 0.0)) < float(tri_quality_min)),
             )
             patterns.append(Pattern(
                 kind=kind,
@@ -5301,8 +5340,30 @@ try:
                 quality=float(r.get("quality_score", 0.0)),
                 direction_bias=("up" if str(r.get("dir","bull")).lower()=="bull" else "down"),
             ))
-    # Rectangle: 直接検出 -> Pattern化
-    if enable_rect:
+        if tri_show_stats:
+            stats = st.session_state.get('triangle_stats') or {}
+            if stats:
+                import pandas as _pd
+                df_stats = _pd.DataFrame([
+                    ["試行終端バー", stats.get('loop_e')],
+                    ["長さ試行", stats.get('len_try')],
+                    ["失敗:初期幅", stats.get('fail_width_raw')],
+                    ["失敗:ATR収縮", stats.get('fail_atr_cons')],
+                    ["失敗:ピボット不足", stats.get('fail_pivots')],
+                    ["失敗:R²不足", stats.get('fail_r2')],
+                    ["失敗:終盤幅", stats.get('fail_width_e')],
+                    ["失敗:収束不足", stats.get('fail_converge')],
+                    ["失敗:型判定", stats.get('fail_type')],
+                    ["受理(高/低品質合計)", stats.get('accepted')],
+                ], columns=["項目","件数"])
+                with st.expander("三角形フィルタ統計", expanded=True):
+                    st.dataframe(df_stats, use_container_width=True)
+    except Exception as e:
+        st.warning(f"三角形検出で例外: {e}")
+
+# Rectangle 検出（個別トライ）
+if enable_rect:
+    try:
         rect_pats = detect_rectangles(
             df,
             high_col="high", low_col="low", close_col="close",
@@ -5339,8 +5400,12 @@ try:
                 quality=float(r.get("quality_score", 0.0)),
                 direction_bias=("up" if str(r.get("dir","bull")).lower()=="bull" else "down"),
             ))
-    # ダブルトップ/ダブルボトム
-    if enable_double:
+    except Exception as e:
+        st.warning(f"レクタングル検出で例外: {e}")
+
+# ダブルトップ/ボトム
+if enable_double:
+    try:
         tol_mode_val = (dbl_tol_mode or "atr").lower()
         tol_mode_par = "atr" if "atr" in tol_mode_val else "pct"
         double_patterns = detect_double_top_bottom(
@@ -5353,11 +5418,13 @@ try:
             min_depth_atr=float(dbl_min_depth_atr),
             confirm_bars=2 if bool(dbl_require_confirm) else 1,
         )
-    patterns += [max(double_patterns, key=lambda p: p.t_end)] if (show_only_latest_double and double_patterns) else double_patterns
+    except Exception as e:
+        st.warning(f"ダブルトップ/ボトム検出で例外: {e}")
+patterns += [max(double_patterns, key=lambda p: p.t_end)] if (show_only_latest_double and double_patterns) else double_patterns
 
-
-    if enable_flag:
-        # 内部版は Pattern を返すので、そのまま patterns に追加する
+# Flag / Pennant
+if enable_flag:
+    try:
         patterns += detect_flag_pennant(
             df,
             lookback=int(flag_lookback),
@@ -5367,27 +5434,34 @@ try:
             sigma_k=float(flag_sigma_k),
             pole_min_atr=float(flag_pole_min_atr),
         )
-    if enable_hs:
+    except Exception as e:
+        st.warning(f"フラッグ/ペナント検出で例外: {e}")
+
+# Head & Shoulders
+if enable_hs:
+    try:
         patterns += detect_head_shoulders(df, pivot_high, pivot_low, lookback=hs_lookback, tol=hs_tol)
-    if enable_asia:
-        try:
-            patterns += detect_asia_box_break(
-                df,
-                asia_start=asia_start_jst,
-                asia_end=asia_end_jst,
-                break_buffer=float(asia_break_buffer),
-                wickiness_max=float(asia_wickiness_max),
-                min_range_pips=float(asia_min_range_pips),
-                min_range_atrK=float(asia_min_range_atrK),
-                max_range_atrK=float(asia_max_range_atrK),
-                news_block_minutes=int(asia_news_block_min),
-                windows_df=st.session_state.get('windows_df'),
-            )
-        except Exception as e:
-            st.warning(f"アジア箱検出で問題: {e}")
-except Exception as e:
-    st.error(f"パターン検出中にエラー: {e}")
-    patterns = []
+    except Exception as e:
+        st.warning(f"H&S検出で例外: {e}")
+
+# Asia Box
+if enable_asia:
+    try:
+        patterns += detect_asia_box_break(
+            df,
+            asia_start=asia_start_jst,
+            asia_end=asia_end_jst,
+            break_buffer=float(asia_break_buffer),
+            wickiness_max=float(asia_wickiness_max),
+            min_range_pips=float(asia_min_range_pips),
+            min_range_atrK=float(asia_min_range_atrK),
+            max_range_atrK=float(asia_max_range_atrK),
+            news_block_minutes=int(asia_news_block_min),
+            windows_df=st.session_state.get('windows_df'),
+            allow_low_quality_on_filter_fail=bool(asia_allow_low_quality),
+        )
+    except Exception as e:
+        st.warning(f"アジア箱検出で例外: {e}")
 
 import re
 import pandas as pd
@@ -5569,6 +5643,65 @@ fig.add_trace(go.Candlestick(
     increasing_line_color=COLOR_CANDLE_UP_EDGE, increasing_fillcolor=COLOR_CANDLE_UP_BODY,
     decreasing_line_color=COLOR_CANDLE_DN_EDGE, decreasing_fillcolor=COLOR_CANDLE_DN_BODY
 ))
+
+# --- オーバーレイ: 今日のアジア高値/安値（視覚化） ---
+try:
+    if show_recent_asia and isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
+        tzinfo = df.index.tz or JST
+        now_ts = df.index[-1]
+        # 当日 AsiaEnd の時刻
+        _today = (now_ts.tz_convert(tzinfo) if now_ts.tz is not None else now_ts.tz_localize(JST)).normalize()
+        t_today_end = pd.Timestamp(f"{_today.date()} {asia_end_jst}", tz=tzinfo)
+        # 直近完了セッションの基準日
+        base_day = _today if now_ts >= t_today_end else (_today - pd.Timedelta(days=1))
+        # 探索（最大7日前）
+        session_found = None
+        for i in range(0, 7):
+            day = base_day - pd.Timedelta(days=i)
+            t_start = pd.Timestamp(f"{day.date()} {asia_start_jst}", tz=tzinfo)
+            t_end   = pd.Timestamp(f"{day.date()} {asia_end_jst}",   tz=tzinfo)
+            asia = df[(df.index >= t_start) & (df.index <= t_end)]
+            if len(asia) >= 5:
+                session_found = (day, t_start, t_end, asia)
+                break
+        if session_found:
+            day, t_asia_start, t_asia_end, asia = session_found
+            asia_high = float(asia["high"].max())
+            asia_low  = float(asia["low"].min())
+            rng = asia_high - asia_low
+            # シェード
+            try:
+                fig.add_vrect(x0=t_asia_start, x1=t_asia_end, fillcolor=COLOR_ASIA, opacity=0.08, line_width=0)
+            except Exception:
+                pass
+            # ライン
+            x0 = df.index[0]; x1 = df.index[-1]
+            fig.add_shape(type="line", x0=x0, x1=x1, y0=asia_high, y1=asia_high,
+                          line=dict(color=COLOR_ASIA, width=1, dash="dot"))
+            fig.add_shape(type="line", x0=x0, x1=x1, y0=asia_low, y1=asia_low,
+                          line=dict(color=COLOR_ASIA, width=1, dash="dot"))
+            # 注釈
+            try:
+                fig.add_annotation(x=x1, y=asia_high, text=f"Recent Asia High {asia_high:.3f}", showarrow=False,
+                                   font=dict(color=COLOR_ASIA, size=10), xanchor="right", yanchor="bottom")
+                fig.add_annotation(x=x1, y=asia_low, text=f"Recent Asia Low {asia_low:.3f}", showarrow=False,
+                                   font=dict(color=COLOR_ASIA, size=10), xanchor="right", yanchor="top")
+            except Exception:
+                pass
+            # サマリ保存（別キー）
+            try:
+                st.session_state['recent_asia_box_summary'] = {
+                    'date': str(day.date()), 'start': str(t_asia_start), 'end': str(t_asia_end),
+                    'high': asia_high, 'low': asia_low, 'range': rng,
+                    'pips': (rng / pip_value("USDJPY")) if pip_value("USDJPY") else float('nan'),
+                    'bars': len(asia)
+                }
+            except Exception:
+                pass
+        else:
+            st.session_state['recent_asia_box_summary'] = None
+except Exception:
+    pass
 ## --- トレードポイント描画 ---
 for pt in st.session_state.get("trade_points", []):
     if pt["type"] == "buy":
@@ -5723,19 +5856,38 @@ def _draw_triangle(fig, p: Pattern):
         t1 = p.get('t_end') if isinstance(p, dict) else getattr(p, 't_end', None)
         if not (ul and ll and t0 is not None and t1 is not None):
             return
-        s_idx = df.index.get_loc(t0)
-        e_idx = df.index.get_loc(t1)
+        # get_loc はキー未一致で KeyError になるため安全化（最近傍インデクサ）
+        try:
+            s_idx = df.index.get_loc(t0)
+        except Exception:
+            s_idx = df.index.get_indexer([t0], method='nearest')[0]
+        try:
+            e_idx = df.index.get_loc(t1)
+        except Exception:
+            e_idx = df.index.get_indexer([t1], method='nearest')[0]
+        if s_idx > e_idx:
+            s_idx, e_idx = e_idx, s_idx
         xs = np.arange(s_idx, e_idx+1, dtype=float)
         y_u = ul[0] * xs + ul[1]
         y_l = ll[0] * xs + ll[1]
         x_axis = df.index[s_idx:e_idx+1]
-        fig.add_scatter(x=x_axis, y=y_u, mode="lines", name="triangle upper", line=dict(color=COLOR_TRIANGLE, width=2), opacity=0.8)
-        fig.add_scatter(x=x_axis, y=y_l, mode="lines", name="triangle lower", line=dict(color=COLOR_TRIANGLE, width=2), opacity=0.8)
+        low_q = bool(params.get('low_quality'))
+        dash_style = "dot" if low_q else "solid"
+        alpha = 0.35 if low_q else 0.85
+        width = 1 if low_q else 2
+        fig.add_scatter(x=x_axis, y=y_u, mode="lines", name="triangle upper", line=dict(color=COLOR_TRIANGLE, width=width, dash=dash_style), opacity=alpha, showlegend=False)
+        fig.add_scatter(x=x_axis, y=y_l, mode="lines", name="triangle lower", line=dict(color=COLOR_TRIANGLE, width=width, dash=dash_style), opacity=alpha, showlegend=False)
         # 補助線（entry/stop/target）があれば
         for key, label in (("entry","entry"),("stop","stop"),("target","target")):
             val = params.get(key)
             if val is not None and np.isfinite(val):
-                fig.add_hline(y=float(val), line_dash="dot", annotation_text=label)
+                fig.add_hline(y=float(val), line=dict(color=COLOR_TRIANGLE, width=1, dash="dot"), annotation_text=label)
+        if low_q:
+            try:
+                fig.add_annotation(x=x_axis[-1], y=float(y_u[-1]), text="LowQ", showarrow=False,
+                                   font=dict(color=COLOR_TRIANGLE, size=9))
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -6211,7 +6363,14 @@ except Exception:
 
 # 描画（自動更新時のズーム保持は行わず、毎回リセット）
 st.plotly_chart(fig, use_container_width=True, key="main_chart")
-st.caption(f"最終更新: {pd.Timestamp.now(tz=JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+caption_line = f"最終更新: {pd.Timestamp.now(tz=JST).strftime('%Y-%m-%d %H:%M:%S %Z')}"
+try:
+    rab = st.session_state.get('recent_asia_box_summary')
+    if rab:
+        caption_line += f"  |  Recent Asia H/L: {rab['high']:.3f} / {rab['low']:.3f}  (Range {rab['range']:.3f} ≈ {rab['pips']:.1f} pips)"
+except Exception:
+    pass
+st.caption(caption_line)
 
 # ---------------- 近傍ニュース判定（モード別） ----------------
 def near_news(ts: pd.Timestamp) -> bool:

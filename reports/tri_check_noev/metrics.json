@@ -1,0 +1,28 @@
+{
+  "pattern": "triangle",
+  "H": 8,
+  "delta_mult": 0.45,
+  "spread_pips": 0.5,
+  "n_rows": 9259,
+  "n_signals": 10,
+  "hit_rate": 0.4,
+  "ev_R": -0.316840132890423,
+  "baseline_up": 0.5567567567567567,
+  "baseline_down": 0.44172972972972974,
+  "uplift_long_vs_up": 0.7184466019417477,
+  "uplift_short_vs_down": 0.9055310817425355,
+  "stage_counts": {
+    "detected_raw": 42,
+    "after_session_allow": 10,
+    "before_session_allow": 42,
+    "after_session_overrides": 10,
+    "before_session_overrides": 10
+  },
+  "verdict": "Needs Fix",
+  "hit_rate_ci": {
+    "lo": 0.16817758120350967,
+    "hi": 0.6873304525498135,
+    "n": 10
+  },
+  "ev_curve_best": null
+}

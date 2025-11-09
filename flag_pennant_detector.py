@@ -1,6 +1,13 @@
+"""
+Deprecated low-level Flag/Pennant detector.
+
+Note:
+- Prefer using src/patterns/flag_pennant.detect_flag_pennant_simplified in new code.
+- This module remains for backward compatibility and batch/offline usage.
+"""
 import numpy as np
 import pandas as pd
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 # =========================
 # Flag / Pennant Detector (drop-in)
@@ -77,7 +84,29 @@ def detect_flags_pennants(
     require_breakout: bool = False,
     r2_min: float = 0.15,
     quality_min: float = 0.55,
-):
+) -> List[Dict[str, Any]]:
+    """Detect flag/pennant patterns with pole + consolidation + optional breakout.
+
+    Parameters:
+        df: DataFrame with at least high/low/close columns.
+        time_col: Optional time column name (unused inside; index is used elsewhere).
+        atr_window: ATR period for normalization.
+        pole_max_bars: Max bars to consider for the pole lookback.
+        pole_min_atr: Min pole magnitude in ATR units.
+        cons_min_bars/cons_max_bars: Consolidation window bounds.
+        pivot_lb/pivot_ub: Pivot detection lookback/lookforward.
+        slope_abs_max_norm: Max normalized slope magnitude for channels.
+        parallel_tol/converge_tol: Flag (parallel) vs Pennant (converging) tolerance.
+        width_max_atr: Max consolidation range in ATR units.
+        contraction_min: ATR contraction ratio vs pole ATR (smaller is tighter).
+        breakout_buffer_atr: Breakout buffer in ATR units from channel edge.
+        require_breakout: If True, only emit when breakout is present.
+        r2_min: Min average R^2 of fitted upper/lower lines.
+        quality_min: Min quality score to emit.
+
+    Returns:
+        List of dicts containing pattern attributes (lines, entry/stop/target, quality, etc.).
+    """
     if any(c not in df.columns for c in [high_col, low_col, close_col]):
         raise ValueError("DataFrame must have high/low/close columns")
 
@@ -205,39 +234,43 @@ def detect_flags_pennants(
         if quality < quality_min:
             continue
 
-    pole_height = abs(close[pole_e] - close[pole_s])
-    if pole_dir == "bull":
-        entry  = max(trigger, upper_y_end)
-        stop   = lower_y_end - 0.25*atr[cons_e]
-        target = entry + pole_height
-    else:
-        entry  = min(trigger, lower_y_end)
-        stop   = upper_y_end + 0.25*atr[cons_e]
-        target = entry - pole_height
+        # respect breakout requirement if requested
+        if require_breakout and breakout_idx is None:
+            continue
 
-    patterns.append({
-            "kind": pattern_type,
-            "dir": pole_dir,
-            "start_idx": int(cons_s),
-            "end_idx": int(cons_e),
-            "pole_start_idx": int(pole_s),
-            "pole_end_idx": int(pole_e),
-            "breakout_idx": int(breakout_idx) if breakout_idx is not None else None,
-            "upper_line": (float(uh_slope), float(uh_inter), float(uh_r2)),
-            "lower_line": (float(lh_slope), float(lh_inter), float(lh_r2)),
-            "quality_score": quality,
-            "atr_cons": float(atr_cons),
-            "atr_pole": float(atr_pole),
-            "contraction_ratio": float(atr_cons / (atr_pole + 1e-12)),
-            "entry": float(entry),
-            "stop": float(stop),
-            "target": float(target),
-        })
+        pole_height = abs(close[pole_e] - close[pole_s])
+        if pole_dir == "bull":
+            entry  = max(trigger, upper_y_end)
+            stop   = lower_y_end - 0.25*atr[cons_e]
+            target = entry + pole_height
+        else:
+            entry  = min(trigger, lower_y_end)
+            stop   = upper_y_end + 0.25*atr[cons_e]
+            target = entry - pole_height
+
+        patterns.append({
+                "kind": pattern_type,
+                "dir": pole_dir,
+                "start_idx": int(cons_s),
+                "end_idx": int(cons_e),
+                "pole_start_idx": int(pole_s),
+                "pole_end_idx": int(pole_e),
+                "breakout_idx": int(breakout_idx) if breakout_idx is not None else None,
+                "upper_line": (float(uh_slope), float(uh_inter), float(uh_r2)),
+                "lower_line": (float(lh_slope), float(lh_inter), float(lh_r2)),
+                "quality_score": quality,
+                "atr_cons": float(atr_cons),
+                "atr_pole": float(atr_pole),
+                "contraction_ratio": float(atr_cons / (atr_pole + 1e-12)),
+                "entry": float(entry),
+                "stop": float(stop),
+                "target": float(target),
+            })
 
     return patterns
 
-def detect_flag_pennant(df, **kwargs) -> pd.DataFrame:
-    """互換ラッパー：DataFrameで返す"""
+def detect_flag_pennant(df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+    """Pandas-friendly wrapper returning a DataFrame for downstream processing."""
     patterns = detect_flags_pennants(df, **kwargs)
     if not patterns:
         return pd.DataFrame(columns=[
