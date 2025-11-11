@@ -2,6 +2,12 @@ from dataclasses import dataclass
 import pandas as pd
 import numpy as np
 
+# shared level-relative features
+try:
+    from features_util import compute_level_relative_features
+except Exception:
+    compute_level_relative_features = None
+
 @dataclass
 class BreakLabelConfig:
     horizon_bars: int = 12       # H=12（15分足なら3時間先）
@@ -14,6 +20,17 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     未来情報を使わないrolling/shiftのみを利用（closed='left'で左閉区間）
     """
     df = df.sort_values('timestamp').copy()
+    # Normalize timestamp to tz-naive to avoid merge mismatches
+    try:
+        ts = pd.to_datetime(df['timestamp'], errors='coerce')
+        if getattr(ts.dtype, 'tz', None) is not None:
+            try:
+                ts = ts.dt.tz_convert('UTC').dt.tz_localize(None)
+            except Exception:
+                ts = ts.dt.tz_localize(None)
+        df['timestamp'] = ts
+    except Exception:
+        pass
     # 過去N本の高安/ATRなど（未来参照なし）
     win = 96  # 過去一日相当（15分足）
     df['ret_1']  = df['close'].pct_change(1)
@@ -37,7 +54,29 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # 将来参照を避けるため、計算直後にNaN行を落とす
     feats = ['ret_1','ret_4','atr','touch_density','slope_long','tokyo','london','ny']
-    out = df[['timestamp','open','high','low','close','volume'] + feats].dropna().copy()
+    base = df[['timestamp','open','high','low','close','volume'] + feats].dropna().copy()
+
+    # --- add level-relative features (train/infer common) ---
+    try:
+        if compute_level_relative_features is not None:
+            # Lightweight defaults for training speed
+            lvl = compute_level_relative_features(
+                df[['timestamp','open','high','low','close','volume']],
+                window=300,
+                look_pivot=9,
+                k=2,
+                stride=10,
+            )
+            out = base.merge(lvl, on='timestamp', how='left')
+        else:
+            out = base
+    except Exception as e:
+        # Fallback quietly but emit a one-line hint for training logs
+        try:
+            print(f"[features][warn] level-relative features disabled: {e}")
+        except Exception:
+            pass
+        out = base
     return out
 
 def true_range_atr(df: pd.DataFrame, n: int = 14) -> pd.Series:

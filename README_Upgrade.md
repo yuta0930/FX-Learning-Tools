@@ -22,6 +22,24 @@ This document summarizes the minimal-invasion upgrade that introduces:
 - scripts/: run_weekly_jobs.py, backfill_logs.py
 - tests/: test_new_*.py (smoke/unit tests for new modules)
 
+## 2025-11-11 Update (Break Model & Features Alignment)
+- Added level-relative features (`lvl_k1_up/dn`, `lvl_k2_up/dn`, `lvl_near_cnt`, `lvl_near_flag`, `lvl_span_atr`) unified between training and inference via `ml/time_consistency.build_features`.
+- Fixed timestamp tz normalization mismatch (aware vs naive) that previously caused silent loss of `lvl_*` columns during merges.
+- Introduced FAST training mode in `ai_train_break.py` (`--fast`): skips calibration search and uses lighter LBFGS L2 logistic for rapid iteration (pickle-safe).
+- Reworked `fit_with_safe_calibration` to return picklable estimators directly (removed local `_Wrap` class) eliminating PicklingError on save.
+- Added calibration report JSON/PNG emission during normal mode training; observed Brier/ECE improvement (FAST Brier≈0.2407 → Calibrated Brier≈0.2103, ECE≈0.0445).
+- Updated README with lvl_* feature documentation and FAST mode usage command.
+
+### Impact
+- Training/inference feature parity restored (no hidden drops).
+- Faster experiment loop (FAST) without sacrificing downstream calibration capability.
+- More reliable artifact persistence (pickle compatibility) and history tracking (`reports/model_history.csv`).
+
+### Follow-up Suggestions
+- Optionally schedule periodic normal-mode recalibration (e.g., weekly) while using FAST for daily smoke retrains.
+- Extend level-relative features with recent-touch time decay or density volatility normalization if EV gains plateau.
+- Capture per-feature SHAP or permutation importance to quantify contribution of new lvl_* features.
+
 ## Minimal edits
 - app.py: call initialize.ensure_dirs() once at startup (safe side effects only)
 
@@ -72,3 +90,4 @@ This document summarizes the minimal-invasion upgrade that introduces:
 - Symlink for calibration/current.joblib falls back to file copy on Windows.
 - All new code includes docstrings and type hints; defaults are safe (halt on exceptions).
 - Risk state persists to artifacts/risk/state_{yyyymmdd}.json for process restarts.
+ - FAST モード利用時は未較正確率のため、本番前に `scripts/calibrate_break.py` で較正を推奨。

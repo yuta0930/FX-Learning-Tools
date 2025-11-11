@@ -52,6 +52,8 @@ from label_break import build_break_labels, BreakLabelConfig
 RNG_SEED = 42
 DROP_COLS = ["timestamp", "open", "high", "low", "close", "volume", "y"]
 EPS = 1e-9
+# Fast mode global flag (set by CLI --fast); when True we skip expensive calibration loops
+FAST_MODE = False
 
 
 def _ensure_dir(path: str):
@@ -184,25 +186,53 @@ def _search_temperature(p_val: np.ndarray, y_val: np.ndarray, T_min=0.5, T_max=3
 
 
 def fit_with_safe_calibration(Xtr: np.ndarray, ytr: np.ndarray):
-    """単一クラスfold回避＆最近側 subset で較正する堅牢版"""
+    """Calibrated fit unless FAST_MODE enabled.
+
+    FAST_MODE=True の場合:
+      - 近似最近側subset探索・isotonic/temperature をスキップ
+      - ElasticNetロジスティック単独（max_iter短縮）を返す
+    """
     if len(np.unique(ytr)) < 2:
         return None, "skip_single_class"
 
-    def _base():
-        return Pipeline([
-            ("scaler", StandardScaler(with_mean=True, with_std=True)),
-            ("logreg", LogisticRegression(
-                solver="saga",
-                penalty="elasticnet",
-                l1_ratio=0.12,
-                C=0.45,
-                max_iter=8000,
-                tol=2e-4,
-                class_weight="balanced",
-                n_jobs=-1,
-                random_state=RNG_SEED
-            ))
-        ])
+    def _base(max_iter=8000, n_jobs_override=None):
+        if FAST_MODE:
+            # Faster solver (lbfgs) without elasticnet for quick iteration
+            return Pipeline([
+                ("scaler", StandardScaler(with_mean=True, with_std=True)),
+                ("logreg", LogisticRegression(
+                    solver="lbfgs",
+                    penalty="l2",
+                    C=0.75,
+                    max_iter=max_iter,
+                    tol=5e-4,
+                    class_weight="balanced",
+                    n_jobs=(1 if n_jobs_override is None else int(n_jobs_override)),
+                    random_state=RNG_SEED
+                ))
+            ])
+        else:
+            return Pipeline([
+                ("scaler", StandardScaler(with_mean=True, with_std=True)),
+                ("logreg", LogisticRegression(
+                    solver="saga",
+                    penalty="elasticnet",
+                    l1_ratio=0.12,
+                    C=0.45,
+                    max_iter=max_iter,
+                    tol=2e-4,
+                    class_weight="balanced",
+                    n_jobs=(-1 if n_jobs_override is None else int(n_jobs_override)),
+                    random_state=RNG_SEED
+                ))
+            ])
+
+    if FAST_MODE:
+        # Fast path: direct fit (lower max_iter) w/o calibration search
+        base = _base(max_iter=400, n_jobs_override=1)
+        base.fit(Xtr, ytr)
+        # そのままパイプラインを返す（pickle可能）
+        return base, "fast_un_calibrated"
 
     n = len(Xtr)
     cfg = get_config()
@@ -216,15 +246,12 @@ def fit_with_safe_calibration(Xtr: np.ndarray, ytr: np.ndarray):
             continue
         try:
             skf = StratifiedKFold(n_splits=3, shuffle=False)
-            # Base reference: sigmoid
             cand_models = []
             sig = CalibratedClassifierCV(_base(), method="sigmoid", cv=skf)
             sig.fit(X_sub, y_sub)
             p_sig = sig.predict_proba(X_sub)[:, 1]
             brier_sig = sklearn.metrics.brier_score_loss(y_sub, p_sig)
             cand_models.append((brier_sig, sig, f"sigmoid(frac={frac})"))
-
-            # Isotonic (if enabled)
             if enable_iso:
                 try:
                     iso = CalibratedClassifierCV(_base(), method="isotonic", cv=skf)
@@ -234,8 +261,6 @@ def fit_with_safe_calibration(Xtr: np.ndarray, ytr: np.ndarray):
                     cand_models.append((brier_iso, iso, f"isotonic(frac={frac})"))
                 except Exception as e:
                     print(f"[calibration][warn] isotonic failed: {e}")
-
-            # Temperature scaling (if enabled)
             if enable_temp:
                 try:
                     base_cls = _base()
@@ -249,23 +274,15 @@ def fit_with_safe_calibration(Xtr: np.ndarray, ytr: np.ndarray):
                     cand_models.append((brier_temp, temp_model, f"temp(T={T_star:.2f},frac={frac})"))
                 except Exception as e:
                     print(f"[calibration][warn] temperature scaling failed: {e}")
-
-            # Pick best (min Brier)
             brier_best, model_best, label_best = min(cand_models, key=lambda t: t[0])
             return model_best, label_best
         except Exception as e:
             print(f"[calibration error] {e}")
             pass
-
-    # フォールバック（非較正）
     base = _base()
     base.fit(Xtr, ytr)
-
-    class _Wrap:
-        def __init__(self, m): self.m = m
-        def predict_proba(self, X): return self.m.predict_proba(X)
-
-    return _Wrap(base), "fallback_nocal_saga"
+    # そのままパイプラインを返す（pickle可能）
+    return base, "fallback_nocal_saga"
 
 
 # ============================================================
@@ -620,6 +637,7 @@ def parse_args():
     p.add_argument("--cost", dest="cost_per_trade", type=float, default=0.15, help="1トレードあたりのコスト")
     p.add_argument("--model_out", type=str, default="models/break_model.joblib", help="モデル保存先パス")
     p.add_argument("--meta_out", type=str, default="models/break_meta.json", help="メタ情報保存先パス")
+    p.add_argument("--fast", action="store_true", help="高速モード: 較正スキップ+低反復でクイック学習")
     return p.parse_args()
 
 
@@ -781,6 +799,10 @@ def run_training(args):
 
 def main():
     args = parse_args()
+    global FAST_MODE
+    FAST_MODE = bool(args.fast)
+    if FAST_MODE:
+        print("[mode] FAST_MODE enabled: skipping probability calibration search (direct logistic fit).")
     run_training(args)
 
 if __name__ == "__main__":

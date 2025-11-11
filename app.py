@@ -3618,7 +3618,8 @@ def compute_level_scores(df: pd.DataFrame, levels: list, touch_buffer: float,
     import math
     rows=[]
     for lv in levels:
-        touch_mask = ((df["low"] <= lv) & (df["high"] >= lv)) | (df["close"].sub(lv).abs() <= touch_buffer)
+        # touches は高値・安値レンジがレベルを跨いだ場合のみに限定（終値の近接は near 指標で評価）
+        touch_mask = ((df["low"] <= lv) & (df["high"] >= lv))
         touches = int(touch_mask.sum())
         dist = abs(rec_close - lv)
         near = 1.0 / (dist + 1e-6)
@@ -4298,6 +4299,45 @@ def detect_rectangles(
     n = len(df)
     if n < max(atr_window + win_max_bars + 5, 80):
         return []
+
+    # === Derived series & pivot pre-compute (previously missing) ===
+    atr = _atr(highs, lows, close, window=atr_window)
+    # pivot flags on highs/lows separately; reuse highs for maxima, lows for minima
+    # _pivots(highs) returns (is_max, is_min). For rectangle we want highs pivot highs and lows pivot lows.
+    is_h_hi, _tmp_min_ignore = _pivots(highs, lb=pivot_lb, ub=pivot_ub)
+    _tmp_max_ignore, is_l_lo = _pivots(lows, lb=pivot_lb, ub=pivot_ub)
+    # unify naming expected by downstream logic
+    is_h = is_h_hi
+    is_l = is_l_lo
+    # cumulative counts for O(1) window pivot counts
+    H_cum = np.concatenate(([0], np.cumsum(is_h.astype(int))))
+    L_cum = np.concatenate(([0], np.cumsum(is_l.astype(int))))
+    close_cum = np.concatenate(([0.0], np.cumsum(close.astype(float))))
+
+    # breakout confirmation helper (was referenced but undefined)
+    def _confirm_break(e: int, expect: str, uh_s: float, uh_b: float, lh_s: float, lh_b: float):
+        up_line = uh_s * e + uh_b
+        lo_line = lh_s * e + lh_b
+        buf = breakout_buffer_atr * atr[e]
+        ce = close[e]
+        broken = False
+        if expect == "up" and ce > up_line + buf:
+            broken = True
+        elif expect == "down" and ce < lo_line - buf:
+            broken = True
+        if not broken:
+            return False, None, np.nan, np.nan
+        # require consecutive confirmations if confirm_bars>1
+        if confirm_bars > 1 and e - confirm_bars + 1 >= 0:
+            rng = slice(e - confirm_bars + 1, e + 1)
+            closes_seg = close[rng]
+            if expect == "up" and not np.all(closes_seg > up_line + buf):
+                return False, None, np.nan, np.nan
+            if expect == "down" and not np.all(closes_seg < lo_line - buf):
+                return False, None, np.nan, np.nan
+        entry = ce
+        stop = lo_line - buf if expect == "up" else up_line + buf
+        return True, e, float(entry), float(stop)
 
     def _eval_e(e: int):
         best_local = None
@@ -6727,7 +6767,10 @@ def _collect_trades_range_horizontal(df: pd.DataFrame,
                                      news_imp_min: int,
                                      apply_news: bool,
                                      retest_wait_k: int,
-                                     touch_buffer: float) -> list:
+                                     touch_buffer: float,
+                                     *,
+                                     min_body_frac: float = 0.0,
+                                     require_retest: bool = False) -> list:
     """backtest_rolling の for ループから、水平線ブレイク(終値) 部分だけを切り出した差分収集。
     start_i (inclusive) ～ end_i (exclusive) の i について追加トレード行を返す。
     """
@@ -6740,6 +6783,11 @@ def _collect_trades_range_horizontal(df: pd.DataFrame,
         past = df.iloc[:i+1]
         t = past.index[-1]
         c  = float(past["close"].iloc[-1])
+        o  = float(past["open"].iloc[-1])
+        hi = float(past["high"].iloc[-1])
+        lo = float(past["low"].iloc[-1])
+        rng = max(hi - lo, 1e-9)
+        body_frac = abs(c - o) / rng
         l1 = float(past["low"].iloc[-2]); h1 = float(past["high"].iloc[-2])
 
         if apply_news:
@@ -6757,16 +6805,25 @@ def _collect_trades_range_horizontal(df: pd.DataFrame,
         for lv in lvls_past:
             # 上方向
             if (c > lv + break_buffer) and (l1 <= lv):
+                # 実体比率フィルタ
+                if body_frac < float(min_body_frac):
+                    continue
                 entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                 ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k), float(touch_buffer))
+                if require_retest and not rh:
+                    continue
                 rows.append(dict(time=t, mode="水平ブレイク上", level_or_val=float(lv),
                                  dir="long", entry=entry, exit=exitp,
                                  ret_pips=(exitp-entry)/pv_local - spread_pips,
                                  retest_index=ri, retest_hit=rh))
             # 下方向
             if (c < lv - break_buffer) and (h1 >= lv):
+                if body_frac < float(min_body_frac):
+                    continue
                 entry = c; exitp = float(df["close"].iloc[i+fwd_n])
                 ri, rh = compute_retest(close_s, lv, i, int(retest_wait_k), float(touch_buffer))
+                if require_retest and not rh:
+                    continue
                 rows.append(dict(time=t, mode="水平ブレイク下", level_or_val=float(lv),
                                  dir="short", entry=entry, exit=exitp,
                                  ret_pips=(entry-exitp)/pv_local - spread_pips,
@@ -7016,6 +7073,17 @@ if show_break_prob:
                 # Adaptive θ 用: 確率履歴更新と θ 再計算
                 st.session_state.setdefault('prob_history', [])
                 if prob_df is not None and not prob_df.empty:
+                    # 不確実水準の可視化オーバーレイ（p差<=2%かつmax<0.65）
+                    try:
+                        for _, rr in prob_df.iterrows():
+                            p_up = float(rr.get('P_up', 0) or 0)
+                            p_dn = float(rr.get('P_dn', 0) or 0)
+                            diff = abs(p_up - p_dn)
+                            if diff <= 0.02 and max(p_up, p_dn) < 0.65:
+                                lv = float(rr.get('level'))
+                                fig.add_hline(y=lv, line=dict(color="#9e9e9e", width=1, dash="dot"), opacity=0.35)
+                    except Exception:
+                        pass
                     for _, rr in prob_df.iterrows():
                         for pk in ["P_up", "P_dn"]:
                             pv = rr.get(pk, None)
@@ -7137,6 +7205,13 @@ if show_break_prob:
                 # 最良の方向と期待値を決定
                 best_dir = BUY if ev_up >= ev_dn else SELL
                 best_ev  = ev_up if ev_up >= ev_dn else ev_dn
+
+                # 不確実性フラグ: 上下確率が近い場合（閾値は差が <= 2% かつ maxが0.65未満）
+                p_up_val = float(r.get("P_up", 0))
+                p_dn_val = float(r.get("P_dn", 0))
+                prob_diff = abs(p_up_val - p_dn_val)
+                prob_max  = max(p_up_val, p_dn_val)
+                uncertain = (prob_diff <= 0.02) and (prob_max < 0.65)
                 # Risk guard 判定（レベル単位ではなくグローバル判定。必要なら方向別で2回呼び出し可）
                 risk_allowed = True
                 risk_reason = "ok"
@@ -7180,6 +7255,8 @@ if show_break_prob:
                     "risk_allowed": risk_allowed,
                     "risk_reason": risk_reason,
                     "risk_reason_jp": risk_reason_jp,
+                    "uncertain": bool(uncertain),
+                    "prob_diff": prob_diff,
                 })
 
             # 期待値ランキング表の表示
@@ -7187,12 +7264,13 @@ if show_break_prob:
                        .sort_values("best_EV", ascending=False)
                        .reset_index(drop=True))
 
-            cols_show = ["level","P_up","P_dn","E_pips_up","E_pips_dn","EV_up","EV_dn","best_action","best_EV","samples_up","samples_dn","risk_allowed","risk_reason_jp"]
+            cols_show = ["level","P_up","P_dn","prob_diff","uncertain","E_pips_up","E_pips_dn","EV_up","EV_dn","best_action","best_EV","samples_up","samples_dn","risk_allowed","risk_reason_jp"]
             st.dataframe(
                 ev_df[cols_show]
                     .style.format({
                         "level":"{:.3f}",
                         "P_up":"{:.2%}","P_dn":"{:.2%}",  # 少数2桁まで表示して極小確率を見やすく
+                        "prob_diff":"{:.2%}",
                         "E_pips_up":"{:.3f}","E_pips_dn":"{:.3f}",  # EVの丸め誤差で0に見えるのを回避
                         "EV_up":"{:.3f}","EV_dn":"{:.3f}",
                         "best_EV":"{:.3f}"

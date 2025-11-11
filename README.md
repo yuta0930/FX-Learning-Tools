@@ -7,6 +7,10 @@
 - 予測/推論
 	- 既存の `ai_train_break.py` と `inference_break.py` を踏襲
 	- 校正済みモデルが存在する場合は自動で優先利用（互換API）
+- 特徴量（新規）
+	- 水平レベル相対特徴（`lvl_*`）を追加し、学習/推論で完全整合
+		- 例: `lvl_k1_up/dn`, `lvl_k2_up/dn`, `lvl_near_cnt`, `lvl_near_flag`, `lvl_span_atr`
+		- `ml/time_consistency.build_features` で一元生成（タイムスタンプのtz正規化済み）
 - レジーム（市場状態）
 	- ATR・実現ボラ・高低差比・セッションで簡易クラスタ
 	- `src/features/regime.py`（薄いトランスフォーマー）
@@ -23,6 +27,12 @@
 - アプリ（Streamlit）
 	- `app.py` にモジュールのオン/オフとバックテストサマリ表示を追加
 	- ログ（Parquet/JSONL）保存オプションあり
+
+### 学習の高速化（FASTモード）
+
+- `ai_train_break.py --fast` で較正探索（isotonic/Platt/temperature）をスキップし、短時間で学習できます。
+  - 返すモデルは未較正ですが `predict_proba` 互換で、品質ゲート（AP/Brier）は維持します。
+  - 後で `scripts/calibrate_break.py` により校正を追加可能です。
 
 ## ディレクトリ構成（抜粋）
 
@@ -66,6 +76,12 @@
 	- `equity_wf.png`: エクイティ曲線
 
 4) アプリ起動
+補足: ブレイクモデルのクイック再学習（FAST）
+
+```
+env\Scripts\python.exe ai_train_break.py --csv data/USDJPY_15m.csv --h 20 --buffer 0.0015 --splits 3 --embargo 12 --min_cov 0.15 --model_out models/break_model.joblib --meta_out models/break_meta.json --fast
+```
+
 
 - Streamlit ターミナルで `app.py` を起動（既にセットアップ済みであれば自動）
 - 設定パネル内に「バックテストサマリ (WF)」が表示されます

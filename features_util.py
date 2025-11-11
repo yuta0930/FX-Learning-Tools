@@ -1,6 +1,15 @@
 import pandas as pd
 import numpy as np
 
+# --- level-relative features (shared for train/infer) ---
+from typing import Optional, List, Dict
+try:
+    # utils.ta は本プロジェクト内ユーティリティ（lower-caseカラム前提）
+    from utils.ta import swing_pivots, horizontal_levels, atr as _atr_ta
+except Exception:  # 単体実行時のフォールバック（同等実装は下で定義済み）
+    swing_pivots = None
+    horizontal_levels = None
+
 def _safe_div(a, b, eps=1e-9):
     return np.where(np.abs(b) < eps, 0.0, a / b)
 
@@ -29,7 +38,19 @@ def _hour_sin_cos(ts: pd.Series) -> pd.DataFrame:
 def augment_features(feats: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
     df = raw.copy()
     df = df.sort_values("timestamp").reset_index(drop=True)
-    assert df["timestamp"].is_monotonic_increasing
+    # normalize timezone to naive to avoid merge mismatch
+    try:
+        ts = pd.to_datetime(df["timestamp"], errors="coerce")
+        if getattr(ts.dtype, 'tz', None) is not None:
+            try:
+                ts = ts.dt.tz_convert('UTC').dt.tz_localize(None)
+            except Exception:
+                ts = ts.dt.tz_localize(None)
+        df["timestamp"] = ts
+    except Exception:
+        pass
+    if not df["timestamp"].is_monotonic_increasing:
+        df = df.sort_values("timestamp").reset_index(drop=True)
 
     # 基本派生
     df["ret_1"]  = df["close"].pct_change(1)
@@ -120,3 +141,118 @@ def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     pc = c.shift(1)
     tr = pd.concat([(h-l).abs(), (h-pc).abs(), (l-pc).abs()], axis=1).max(axis=1)
     return tr.ewm(alpha=1.0/float(period), adjust=False).mean()
+
+
+# ============================================================
+# Level-relative features
+# ============================================================
+def compute_level_relative_features(
+    raw_lc: pd.DataFrame,
+    *,
+    window: int = 400,
+    look_pivot: int = 11,
+    min_samples: int = 4,
+    eps: Optional[float] = None,
+    k: int = 2,
+    near_alpha_atr: float = 0.75,
+    use_project_ta: bool = True,
+    stride: int = 1,
+) -> pd.DataFrame:
+    """
+    Compute level-relative features per bar using only past data.
+
+    Inputs (lower-case columns expected): timestamp, open, high, low, close[, volume]
+    Outputs (aligned by index):
+      - lvl_k{i}_up, lvl_k{i}_dn: ATR-normalized distance to i-th nearest level above/below
+      - lvl_near_cnt: #levels within near_thr (near_alpha_atr * ATR)
+      - lvl_near_flag: 1 if lvl_near_cnt > 0
+      - lvl_span_atr: (nearest_up - nearest_dn) / ATR (if both exist, else 0)
+
+    Notes:
+      - Uses project utils.ta.swing_pivots/horizontal_levels if available.
+      - Avoids lookahead by building levels from a rolling past window [i-window+1, i].
+      - k kept small for cost; window default ~400 bars.
+    """
+    df = raw_lc.copy().sort_values("timestamp").reset_index(drop=True)
+    assert df["timestamp"].is_monotonic_increasing
+    n = len(df)
+    if n == 0:
+        cols = [f"lvl_k{i}_up" for i in range(1, k+1)] + [f"lvl_k{i}_dn" for i in range(1, k+1)] + [
+            "lvl_near_cnt", "lvl_near_flag", "lvl_span_atr"
+        ]
+        return pd.DataFrame({c: [] for c in ["timestamp"] + cols})
+
+    # ATR for normalization (use project ta if requested)
+    try:
+        atr14 = _atr_ta(df, 14) if (use_project_ta and _atr_ta is not None) else _atr(df, 14)
+    except Exception:
+        atr14 = _atr(df, 14)
+    atr14 = atr14.ffill().fillna(atr14.median()).replace(0, np.nan)
+
+    # Output arrays
+    up = {i: np.zeros(n, dtype=float) for i in range(1, k+1)}
+    dn = {i: np.zeros(n, dtype=float) for i in range(1, k+1)}
+    near_cnt = np.zeros(n, dtype=float)
+    span_atr = np.zeros(n, dtype=float)
+
+    # Main loop (rolling window levels)
+    stride = max(1, int(stride))
+    last_levels: List[float] = []
+    for i in range(n):
+        recompute = (i % stride == 0) or (i == n - 1) or (not last_levels)
+        if recompute:
+            lo = max(0, i - int(window) + 1)
+            sub = df.iloc[lo:i+1]
+            try:
+                if swing_pivots is not None and horizontal_levels is not None:
+                    ph, pl = swing_pivots(sub, look_pivot)
+                    q = {}
+                    last_levels = horizontal_levels(ph, pl, eps=eps, min_samples=min_samples, quality_out=q)
+                else:
+                    std = float(np.std(sub["close"])) or 1e-6
+                    step = max(std * 0.05, 1e-6)
+                    vals = np.r_[sub["high"].values, sub["low"].values]
+                    bins: Dict[int, List[float]] = {}
+                    for v in vals:
+                        b = int(round(v / step))
+                        bins.setdefault(b, []).append(float(v))
+                    last_levels = [float(np.mean(vs)) for vs in bins.values() if len(vs) >= min_samples]
+                    last_levels = sorted(last_levels)
+            except Exception:
+                last_levels = []
+
+        c = float(df["close"].iloc[i])
+        a = float(atr14.iloc[i]) if not np.isnan(atr14.iloc[i]) else 1.0
+        if a <= 1e-12:
+            a = 1.0
+
+        if not last_levels:
+            for j in range(1, k+1):
+                up[j][i] = 0.0
+                dn[j][i] = 0.0
+            near_cnt[i] = 0.0
+            span_atr[i] = 0.0
+            continue
+
+        above = [lv for lv in last_levels if lv > c]
+        below = [lv for lv in reversed(last_levels) if lv < c]
+
+        for j in range(1, k+1):
+            up[j][i] = max(0.0, (above[j-1] - c) / a) if j <= len(above) else 0.0
+            dn[j][i] = max(0.0, (c - below[j-1]) / a) if j <= len(below) else 0.0
+
+        near_thr = max(1e-8, near_alpha_atr * a)
+        near_cnt[i] = float(sum(1 for lv in last_levels if abs(lv - c) <= near_thr))
+        span_atr[i] = max(0.0, (above[0] - below[0]) / a) if (above and below) else 0.0
+
+    # Assemble DataFrame
+    cols = {
+        **{f"lvl_k{i}_up": up[i] for i in up},
+        **{f"lvl_k{i}_dn": dn[i] for i in dn},
+        "lvl_near_cnt": near_cnt,
+        "lvl_near_flag": (near_cnt > 0).astype(float),
+        "lvl_span_atr": span_atr,
+    }
+    out = pd.DataFrame({"timestamp": df["timestamp"].values, **cols})
+    # Fill any residual NaN with 0.0 for model-friendliness
+    return out.fillna(0.0)

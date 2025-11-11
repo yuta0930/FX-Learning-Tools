@@ -249,7 +249,19 @@ def build_level_break_prob_table_cached(
             ts_val = 0
     else:
         ts_val = 0
-    df_hash = hash((len(df), ts_val, N_recent, round(float(touch_buffer), 6)))
+    # Volatility fingerprint (ATR recent or close std) to invalidate cache across regime shifts
+    try:
+        from utils.ta import atr as _atr
+        vol_series = _atr(df.rename(columns=str.lower), 14)
+        vol_val = float(vol_series.iloc[-1]) if not vol_series.empty else float('nan')
+    except Exception:
+        try:
+            vol_val = float(pd.Series(df.get('close', [])).astype(float).tail(50).std())
+        except Exception:
+            vol_val = float('nan')
+    vol_tag = 0.0 if (vol_val is None or not (vol_val==vol_val)) else round(vol_val, 6)
+
+    df_hash = hash((len(df), ts_val, N_recent, round(float(touch_buffer), 6), vol_tag))
     levels_key = _hashable_levels(use_levels)
     feature_cols_key = tuple(use_cols)
     meta_threshold = float(meta.get("threshold", 0.5))
