@@ -60,14 +60,38 @@ def init_session_state():
     st.session_state.setdefault('use_adaptive_theta', False)
     st.session_state.setdefault('theta_drift_bump_active', False)
     st.session_state.setdefault('theta_bump_drift', 0.03)
+    st.session_state.setdefault('theta_auto_offset', 0.0)
+    st.session_state.setdefault('theta_base_effective', st.session_state.get('theta_base', 0.60))
     # 新モジュールの有効化トグル（後方互換のため既定OFF/一部ON）
     st.session_state.setdefault('enable_regime', True)
     st.session_state.setdefault('enable_calibration', True)  # 校正モデルがあれば自動適用
     st.session_state.setdefault('enable_execution', False)
     st.session_state.setdefault('enable_risk', False)
     st.session_state.setdefault('enable_trade_logging', True)
+    st.session_state.setdefault('atr_filter_override', {'min': None, 'max': None})
+    st.session_state.setdefault('risk_guard_override_active', False)
+    st.session_state.setdefault('auto_params_force_enabled', True)
 
 init_session_state()
+
+def _reset_trade_guard_to_base():
+    guard = st.session_state.get('trade_guard')
+    base_cfg = st.session_state.get('risk_guard_base_cfg')
+    if guard is None or base_cfg is None:
+        return
+    guard.update_config(clone_risk_config(base_cfg))
+    st.session_state['risk_guard_current_cfg'] = clone_risk_config(base_cfg)
+    st.session_state['risk_guard_override_active'] = False
+
+
+def get_theta_base_effective() -> float:
+    """Return the base θ after applying any auto-parameter offsets."""
+    base = float(st.session_state.get('theta_base', 0.60))
+    effective = st.session_state.get('theta_base_effective', base)
+    try:
+        return float(effective)
+    except (TypeError, ValueError):
+        return base
 
 # === 共通処理関数 ===
 def update_prob_buffer(prob_df):
@@ -163,7 +187,17 @@ except Exception:
     pass
 from inference_break import load_break_meta
 from config.loader import get_config
-from risk_guard import make_guard_from_config
+from risk_guard import (
+    make_guard_from_config,
+    clone_risk_config,
+    apply_risk_guard_overrides,
+)
+from src.core.market_profile import (
+    build_market_profile,
+    resolve_atr_filter_with_profile,
+    resolve_risk_guard_overrides,
+    resolve_theta_with_profile,
+)
 import math
 
 # --- ATR 計算ユーティリティ（単純版）---
@@ -274,9 +308,16 @@ if "trade_guard" not in st.session_state:
             )
         elif isinstance(cfg_rg, dict):
             cfg_rg = _NS(**cfg_rg)
-        st.session_state.trade_guard = make_guard_from_config(cfg_rg)
+        guard = make_guard_from_config(cfg_rg)
+        st.session_state.trade_guard = guard
+        base_cfg = clone_risk_config(guard.cfg)
+        st.session_state['risk_guard_base_cfg'] = base_cfg
+        st.session_state['risk_guard_current_cfg'] = clone_risk_config(base_cfg)
     except Exception as e:
         st.session_state.trade_guard = None
+        st.session_state.pop('risk_guard_base_cfg', None)
+        st.session_state.pop('risk_guard_current_cfg', None)
+        st.session_state['risk_guard_override_active'] = False
         st.warning(f"Risk guard 初期化失敗: {e}")
 
 # ---- UI表示：以降はユーザー操作で上書き可能 ----
@@ -427,7 +468,7 @@ def get_final_theta(ts: pd.Timestamp | None = None, windows_df: pd.DataFrame | N
         return float(th2)
     except Exception:
         # 最低限、adaptive→base の順
-        return float(st.session_state.get('theta_adaptive', st.session_state.get('theta_base', 0.60)))
+        return float(st.session_state.get('theta_adaptive', get_theta_base_effective()))
 
 def apply_final_gate(pred_df: pd.DataFrame,
                      windows_df: pd.DataFrame,
@@ -698,8 +739,8 @@ def _rolling_atr(series: pd.Series, period: int) -> float:
 def update_adaptive_theta(prob_history: list, window: int = 200) -> float:
     """prob_history: list[(prob, timestamp)] 直近 window を用いて coverage を求め θ 更新"""
     if not st.session_state.get('use_adaptive_theta', False):
-        return st.session_state.get('theta_base', 0.60)
-    base_theta = st.session_state.get('theta_base', 0.60)
+        return get_theta_base_effective()
+    base_theta = get_theta_base_effective()
     theta_min = st.session_state.get('theta_min', 0.40)
     theta_max = st.session_state.get('theta_max', 0.85)
     target_cov = st.session_state.get('theta_target_cov', 0.08)
@@ -757,8 +798,8 @@ def compute_final_theta_for_time(ts: pd.Timestamp, meta: dict, windows_df: pd.Da
     settings = {
         'theta_min': st.session_state.get('theta_min', 0.40),
         'theta_max': st.session_state.get('theta_max', 0.85),
-        'theta_adaptive': st.session_state.get('theta_adaptive', st.session_state.get('theta_base', 0.60)),
-        'theta_base': st.session_state.get('theta_base', 0.60),
+        'theta_adaptive': st.session_state.get('theta_adaptive', get_theta_base_effective()),
+        'theta_base': get_theta_base_effective(),
         'theta_drift_bump_active': st.session_state.get('theta_drift_bump_active', False),
         'theta_bump_drift': st.session_state.get('theta_bump_drift', 0.03),
         'use_soft_suppress': st.session_state.get('use_soft_suppress', False),
@@ -2192,6 +2233,65 @@ except Exception:
         from streamlit.components.v1 import html
         html(f"""<script>setTimeout(function(){{window.location.reload();}}, {int(refresh_secs*1000)});</script>""", height=0)
 
+st.sidebar.subheader("Auto params")
+auto_force = st.sidebar.checkbox(
+    "マーケットプロファイル自動調整を強制ON",
+    value=bool(st.session_state.get('auto_params_force_enabled', False)),
+    help="ConfigでOFFでも、このチェックを入れるとMarketProfile由来のθ/ATR/リスク調整を適用します。"
+)
+st.session_state['auto_params_force_enabled'] = bool(auto_force)
+
+with st.sidebar.expander("⚙️ Auto params status", expanded=False):
+    auto_enabled = bool(st.session_state.get('auto_params_enabled', False))
+    auto_cfg_enabled = bool(st.session_state.get('auto_params_config_enabled', auto_enabled))
+    auto_override = bool(st.session_state.get('auto_params_override_active', False))
+    status_badge = "🟢 ON" if auto_enabled else "⚪ OFF"
+    st.markdown(f"**Enabled:** {status_badge}")
+    st.write(
+        f"config: {'ON' if auto_cfg_enabled else 'OFF'}  |  override toggle: {'ON' if auto_override else 'OFF'}"
+    )
+
+    profile = st.session_state.get('market_profile')
+    session_label = getattr(profile, 'session', None) if profile else None
+    atr_regime = getattr(profile, 'atr_regime', None) if profile else None
+    theta_effective = st.session_state.get('theta_base_effective')
+    theta_offset = st.session_state.get('theta_auto_offset')
+    atr_override = st.session_state.get('atr_filter_override', {}) or {}
+    atr_min = atr_override.get('min')
+    atr_max = atr_override.get('max')
+    guard_override = bool(st.session_state.get('risk_guard_override_active', False))
+
+    def _fmt_num(val, digits=3):
+        if isinstance(val, (int, float)) and np.isfinite(val):
+            return f"{float(val):.{digits}f}"
+        return "-"
+
+    st.caption("現在のマーケットプロファイル")
+    st.write(
+        f"Session: {session_label or '-'}  |  ATR regime: {atr_regime or '-'}"
+    )
+
+    st.caption("θ & ATR オーバーライド")
+    st.write(
+        f"θ base eff: {_fmt_num(theta_effective)}"
+    )
+    st.write(
+        f"θ offset: {_fmt_num(theta_offset)}"
+    )
+    st.write(
+        f"ATR filter: {_fmt_num(atr_min, 4)} 〜 {_fmt_num(atr_max, 4)}"
+    )
+
+    st.caption("Risk guard")
+    guard_badge = "🟢 override active" if guard_override else "⚪ base config"
+    st.write(guard_badge)
+    if guard_override:
+        cfg = st.session_state.get('risk_guard_current_cfg')
+        if cfg is not None:
+            st.write(
+                f"max/day: {cfg.max_trades_per_day} | max/session: {cfg.max_trades_per_session} | loss→cooldown: {cfg.max_consecutive_losses}"
+            )
+
 st.sidebar.markdown("---")
 # 表示密度（チャートx軸の詰め表示）
 compact_weekend = st.sidebar.checkbox(
@@ -3574,6 +3674,67 @@ with st.spinner("データ取得中..."):
 
         df = df_valid
 
+    cfg_runtime = get_config()
+    auto_cfg = getattr(cfg_runtime, "auto_params", None)
+    auto_cfg_enabled = bool(getattr(auto_cfg, "enabled", False))
+    force_auto = bool(st.session_state.get('auto_params_force_enabled', False))
+    auto_enabled = bool(auto_cfg_enabled or force_auto)
+    st.session_state['auto_params_enabled'] = auto_enabled
+    st.session_state['auto_params_config_enabled'] = auto_cfg_enabled
+    st.session_state['auto_params_override_active'] = bool(force_auto and not auto_cfg_enabled)
+    # defaults (reset in case of failures)
+    st.session_state['theta_auto_offset'] = 0.0
+    st.session_state['theta_base_effective'] = float(st.session_state.get('theta_base', 0.60))
+    st.session_state['atr_filter_override'] = {'min': None, 'max': None}
+    st.session_state['risk_guard_override_active'] = False
+    if auto_enabled:
+        try:
+            profile = build_market_profile(df, cfg_runtime)
+            st.session_state['market_profile'] = profile
+            theta_base = float(st.session_state.get('theta_base', 0.60))
+            theta_resolved = resolve_theta_with_profile(
+                theta_base,
+                session=profile.session,
+                atr_regime=profile.atr_regime,
+                cfg_auto=auto_cfg,
+            )
+            theta_offset = float(theta_resolved - theta_base)
+            st.session_state['theta_auto_offset'] = theta_offset
+            st.session_state['theta_base_effective'] = float(theta_resolved)
+            atr_min, atr_max = resolve_atr_filter_with_profile(
+                default_min=None,
+                default_max=None,
+                session=profile.session,
+                atr_regime=profile.atr_regime,
+                cfg_auto=auto_cfg,
+            )
+            st.session_state['atr_filter_override'] = {'min': atr_min, 'max': atr_max}
+            overrides = resolve_risk_guard_overrides(
+                session=profile.session,
+                atr_regime=profile.atr_regime,
+                cfg_auto=auto_cfg,
+            )
+            guard = st.session_state.get('trade_guard')
+            base_cfg = st.session_state.get('risk_guard_base_cfg')
+            if guard is not None and base_cfg is not None:
+                applied_cfg = apply_risk_guard_overrides(
+                    guard,
+                    base_cfg=base_cfg,
+                    overrides=overrides,
+                )
+                st.session_state['risk_guard_current_cfg'] = clone_risk_config(applied_cfg)
+                st.session_state['risk_guard_override_active'] = bool(overrides)
+        except Exception as exc:
+            st.session_state.pop('market_profile', None)
+            st.session_state['theta_auto_offset'] = 0.0
+            st.session_state['theta_base_effective'] = float(st.session_state.get('theta_base', 0.60))
+            st.session_state['atr_filter_override'] = {'min': None, 'max': None}
+            _reset_trade_guard_to_base()
+            logger.warning("auto_params: market profile build failed: %s", exc)
+    else:
+        st.session_state.pop('market_profile', None)
+        _reset_trade_guard_to_base()
+
 # --- ドリフトメタの更新（価格取得後・確率バッファ更新の前後どちらでも可）---
 st.session_state.setdefault('prob_buffer', [])
 try:
@@ -3581,7 +3742,8 @@ try:
     curr_probs = list(st.session_state.get('prob_buffer', []))[-200:]
     psi_val = float('nan'); sev = 'n/a'; ex_rate=float('nan'); kl=js=hell=float('nan')
     if len(curr_probs) >= 50 and baseline_probs is not None:
-        psi_val, sev, ex_rate, kl, js, hell = calc_psi_and_exrate(curr_probs, baseline_probs, st.session_state.get('theta_base',0.6), st.session_state.get('theta_base',0.6))
+        theta_eff = get_theta_base_effective()
+        psi_val, sev, ex_rate, kl, js, hell = calc_psi_and_exrate(curr_probs, baseline_probs, theta_eff, theta_eff)
     st.session_state['drift_meta'] = {
         'psi': psi_val,
         'severity': sev,
@@ -7098,7 +7260,9 @@ if show_break_prob:
                     st.session_state['recent_closes'] = st.session_state['recent_closes'][-5000:]
                 # θ 更新
                 adaptive_theta_val = update_adaptive_theta(st.session_state['prob_history'], window=300)
-                st.session_state['theta_current'] = adaptive_theta_val if st.session_state.get('use_adaptive_theta') else st.session_state.get('theta_base', 0.60)
+                st.session_state['theta_current'] = (
+                    adaptive_theta_val if st.session_state.get('use_adaptive_theta') else get_theta_base_effective()
+                )
             except Exception as e:
                 import traceback
                 st.error(f"ブレイク確率テーブルの計算でエラー: {e}")

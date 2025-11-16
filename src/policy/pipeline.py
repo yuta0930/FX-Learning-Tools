@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from src.core.market_profile import ATR_MID, MarketProfile, resolve_atr_filter_with_profile
 from src.core.ta import add_atr_if_missing, add_spread_pips_if_missing
 from src.policy.filters import (
     apply_spread_filter,
@@ -32,6 +33,8 @@ def run_market_filters(
     *,
     events_df: Optional[pd.DataFrame] = None,
     cfg: Optional[FilterConfig] = None,
+    auto_params: Optional[Any] = None,
+    market_profile: Optional[MarketProfile] = None,
 ) -> pd.DataFrame:
     """Run a unified pipeline: safe column completion -> market filters -> env guard.
 
@@ -40,6 +43,7 @@ def run_market_filters(
     - Applies environment guard (MODE/KILL) at the end
     """
     cfg = cfg or FilterConfig()
+    cfg = _apply_profile_overrides(cfg, auto_params=auto_params, market_profile=market_profile)
     out = df.copy()
 
     # Safe completion of missing columns (no effect if already present)
@@ -70,3 +74,29 @@ def run_market_filters(
     # Unify reasons into a single human-friendly column (optional, No-Op if not present)
     out = unify_reasons_df(out)
     return out
+
+
+def _apply_profile_overrides(
+    cfg: FilterConfig,
+    *,
+    auto_params: Optional[Any],
+    market_profile: Optional[MarketProfile],
+) -> FilterConfig:
+    if auto_params is None or market_profile is None:
+        return cfg
+
+    session = getattr(market_profile, "session", None)
+    atr_regime = getattr(market_profile, "atr_regime", None) or ATR_MID
+    min_atr, max_atr = resolve_atr_filter_with_profile(
+        default_min=cfg.atr_min,
+        default_max=cfg.atr_max,
+        session=session,
+        atr_regime=atr_regime,
+        cfg_auto=auto_params,
+    )
+    if min_atr == cfg.atr_min and max_atr == cfg.atr_max:
+        return cfg
+    update = {"atr_min": min_atr, "atr_max": max_atr}
+    if hasattr(cfg, "model_copy"):
+        return cfg.model_copy(update=update)
+    return cfg.copy(update=update)

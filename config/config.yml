@@ -71,3 +71,87 @@ risk_guard:
   enable_session_limits: true
   enable_cooldown: true
   atr_period: 14
+auto_params:
+  enabled: false
+  atr_regime:
+    lookback_bars: 96
+    low_quantile: 0.3
+    high_quantile: 0.7
+    min_samples: 50
+  profiles:
+    __default__:
+      low:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      mid:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      high:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+    Tokyo:
+      low:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      mid:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      high:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+    London:
+      low:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      mid:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      high:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+    NewYork:
+      low:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      mid:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}
+      high:
+        theta_offset: 0.0
+        atr_filter:
+          min_atr: null
+          max_atr: null
+        risk_guard: {}

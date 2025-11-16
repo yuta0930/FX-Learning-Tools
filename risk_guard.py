@@ -16,7 +16,7 @@ State is in-memory; for persistence across restarts you could serialize guard.sn
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 import pandas as pd
 import numpy as np
 import time
@@ -150,6 +150,10 @@ class TradeGuard:
             return float('nan')
         return float(self.atr_series[-1])
 
+    def update_config(self, cfg: RiskConfig):
+        """Replace guard limits at runtime (state counters stay intact)."""
+        self.cfg = cfg
+
 
 def make_guard_from_config(cfg_node) -> TradeGuard:
     rc = RiskConfig(
@@ -166,3 +170,44 @@ def make_guard_from_config(cfg_node) -> TradeGuard:
         atr_period=getattr(cfg_node, 'atr_period', 14),
     )
     return TradeGuard(rc)
+
+
+def clone_risk_config(cfg: RiskConfig) -> RiskConfig:
+    """Create a deep copy of a RiskConfig dataclass."""
+    return RiskConfig(**asdict(cfg))
+
+
+def merge_risk_config(base: RiskConfig, overrides: Mapping[str, Any] | None) -> RiskConfig:
+    """Return a new RiskConfig by applying overrides onto a base config."""
+    if not overrides:
+        return clone_risk_config(base)
+    merged = asdict(base)
+    for key, value in overrides.items():
+        if key not in merged or value is None:
+            continue
+        current = merged[key]
+        try:
+            if isinstance(current, bool):
+                merged[key] = bool(value)
+            elif isinstance(current, int) and not isinstance(current, bool):
+                merged[key] = int(value)
+            elif isinstance(current, float):
+                merged[key] = float(value)
+            else:
+                merged[key] = value
+        except Exception:
+            # Ignore invalid overrides to preserve safety
+            continue
+    return RiskConfig(**merged)
+
+
+def apply_risk_guard_overrides(
+    guard: TradeGuard,
+    *,
+    base_cfg: RiskConfig,
+    overrides: Mapping[str, Any] | None,
+) -> RiskConfig:
+    """Apply overrides to a guard using the provided base config and return the new config."""
+    new_cfg = merge_risk_config(base_cfg, overrides)
+    guard.update_config(new_cfg)
+    return new_cfg

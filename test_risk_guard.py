@@ -1,5 +1,10 @@
 import pandas as pd
-from risk_guard import TradeGuard, RiskConfig
+from risk_guard import (
+    TradeGuard,
+    RiskConfig,
+    apply_risk_guard_overrides,
+    clone_risk_config,
+)
 
 def test_daily_limit():
     cfg = RiskConfig(max_trades_per_day=2, max_trades_per_session=10, max_consecutive_losses=5)
@@ -52,3 +57,23 @@ def test_state_contains_limits():
     g = TradeGuard(cfg)
     st = g.state()
     assert 'max_day_trades' in st and 'max_session_trades' in st and 'loss_cooldown_after' in st
+
+
+def test_apply_risk_guard_overrides_updates_guard():
+    cfg = RiskConfig(max_trades_per_day=40, max_trades_per_session=10)
+    guard = TradeGuard(cfg)
+    base_cfg = clone_risk_config(guard.cfg)
+
+    overrides = {
+        'max_trades_per_day': 5,
+        'enable_cooldown': False,
+    }
+
+    new_cfg = apply_risk_guard_overrides(guard, base_cfg=base_cfg, overrides=overrides)
+
+    assert new_cfg.max_trades_per_day == 5
+    assert new_cfg.enable_cooldown is False
+    # Guard should start using the overridden config
+    assert guard.cfg.max_trades_per_day == 5
+    # Base snapshot must remain unchanged for future resets
+    assert base_cfg.max_trades_per_day == 40

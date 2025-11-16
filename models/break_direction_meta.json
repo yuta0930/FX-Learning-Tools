@@ -4,9 +4,9 @@
   "symbol": "USDJPY=X",
   "interval": "15m",
   "period": "60d",
-  "start_ts": "2025-06-09 09:15:00+00:00",
-  "end_ts": "2025-11-11 05:45:00+00:00",
-  "train_rows": 10441,
+  "start_ts": "2025-06-09 09:15:00",
+  "end_ts": "2025-11-14 21:45:00",
+  "train_rows": 10793,
   "class_balance": {
     "pos": null,
     "neg": null
@@ -18,12 +18,12 @@
   },
   "OOF": {
     "AUC": null,
-    "AP": 0.35930123779229073,
-    "Brier": 0.22951062880842366
+    "AP": 0.4619898664406396,
+    "Brier": 0.21794894770655565
   },
-  "threshold": 0.5816666666666667,
-  "coverage_at_threshold": 0.015632183908045976,
-  "ev_per_trade_at_threshold": 0.15406022368301586,
+  "threshold": 0.7796464646464647,
+  "coverage_at_threshold": 0.010289210233592881,
+  "ev_per_trade_at_threshold": 0.5800924849304661,
   "ev_cfg": {
     "rr": 1.0,
     "cost_ratio": 0.02
@@ -39,6 +39,13 @@
       "tokyo",
       "london",
       "ny",
+      "lvl_k1_up",
+      "lvl_k2_up",
+      "lvl_k1_dn",
+      "lvl_k2_dn",
+      "lvl_near_cnt",
+      "lvl_near_flag",
+      "lvl_span_atr",
       "ret_1",
       "ret_4",
       "atr",
@@ -46,7 +53,14 @@
       "slope_long",
       "tokyo",
       "london",
-      "ny"
+      "ny",
+      "lvl_k1_up",
+      "lvl_k2_up",
+      "lvl_k1_dn",
+      "lvl_k2_dn",
+      "lvl_near_cnt",
+      "lvl_near_flag",
+      "lvl_span_atr"
     ],
     "calibrated": true,
     "calibration_method": "isotonic",
@@ -54,8 +68,8 @@
   },
   "random_state": 42,
   "code_hash": "842de0f5683db23c8bcf0862107df123e10495f6734348c59b72813c73ce342c",
-  "trained_at": 1762862393,
-  "trained_at_iso": "2025-11-11T11:59:53.350154+00:00",
+  "trained_at": 1763298995,
+  "trained_at_iso": "2025-11-16T13:16:35.070702+00:00",
   "ev": null,
   "up_summary": null,
   "down_summary": null
