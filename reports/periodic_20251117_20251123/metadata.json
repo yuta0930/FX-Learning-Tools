@@ -1,8 +1,8 @@
 {
-  "generated_at": "2025-11-23T21:37:30.777118",
+  "generated_at": "2025-11-23T21:51:03.552237",
   "period": {
-    "start": "2025-01-01",
-    "end": "2025-01-31"
+    "start": "2025-11-17",
+    "end": "2025-11-23"
   },
   "rows": 0,
   "sources": [
@@ -16,8 +16,9 @@
     "config\\reasons_map.yml": "4ac23a7ebdc5f318e0ecfc3f242fd86e8b636f6d3c557eed57f56e6795a9bef3"
   },
   "artifacts": {
-    "daily_csv": "reports\\periodic_20250101_20250131\\daily.csv",
-    "top_reasons_csv": "reports\\periodic_20250101_20250131\\top_reasons.csv"
+    "daily_csv": "reports\\periodic_20251117_20251123\\daily.csv",
+    "top_reasons_csv": "reports\\periodic_20251117_20251123\\top_reasons.csv",
+    "top_reasons_normalized_csv": "reports\\periodic_20251117_20251123\\top_reasons_normalized.csv"
   },
   "notes": "Empty inputs produce empty CSVs with headers; safe No-Op by design."
 }

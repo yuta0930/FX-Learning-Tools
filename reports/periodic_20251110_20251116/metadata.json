@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-11-16T22:16:10.696159",
+  "generated_at": "2025-11-23T21:51:41.667533",
   "period": {
     "start": "2025-11-10",
     "end": "2025-11-16"
@@ -9,7 +9,7 @@
     "logs\\executions.parquet",
     "logs\\trades.parquet"
   ],
-  "git_commit": "28df699",
+  "git_commit": "940135a",
   "config_hashes": {
     "config\\config.yml": "252bc90d3e2cb251a7cc011370f24c430e6d5d132d06059cade3661a476aaf5d",
     "config\\events.yml": "02c7d8e735106ed9f339d9985cea4143d4a0d8a60d855cedc0d04cd98f968f4d",

@@ -2312,9 +2312,10 @@ zoom_recent_n = st.sidebar.slider(
 )
 y_zoom_margin_pct = st.sidebar.slider(
     "ズーム時の縦余白(%)",
-    min_value=0, max_value=50, value=10, step=1,
+    min_value=0, max_value=50, value=0, step=1,
     help="ズーム適用時に上下へ追加する余白の割合（データの高値-安値に対する百分率）。"
 )
+# NOTE: デフォルト値は 2025-11-23 に 10% → 0% に変更（初期表示で余白ゼロにするため）
 # --- 🕒 現在時刻（JST, 秒付き） ---
 with st.sidebar.expander("🕒 現在時刻 (JST)", expanded=True):
     try:
