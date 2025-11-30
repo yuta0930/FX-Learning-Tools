@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-11-23T21:52:12.302424",
+  "generated_at": "2025-11-30T20:02:11.818931",
   "year_month": "202511",
   "time_range": {
     "min": null,
@@ -7,7 +7,7 @@
   },
   "rows": 0,
   "sources": [],
-  "git_commit": "940135a",
+  "git_commit": "5d42191",
   "config_hashes": {
     "config\\config.yml": "252bc90d3e2cb251a7cc011370f24c430e6d5d132d06059cade3661a476aaf5d",
     "config\\events.yml": "02c7d8e735106ed9f339d9985cea4143d4a0d8a60d855cedc0d04cd98f968f4d",
