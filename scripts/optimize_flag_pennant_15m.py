@@ -26,14 +26,7 @@ import traceback
 import numpy as np
 import pandas as pd
 
-# Make repository paths importable when running as a script
-import sys, os
-_HERE = os.path.dirname(__file__)
-_ROOT = os.path.abspath(os.path.join(_HERE, os.pardir))
-_SRC = os.path.join(_ROOT, "src")
-for p in (_ROOT, _SRC):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+import _bootstrap  # noqa: F401
 
 # Local imports (after path setup)
 from src.patterns.flag_pennant import detect_flag_pennant_simplified, FlagPennantSignal

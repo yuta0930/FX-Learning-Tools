@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 
+import _bootstrap  # noqa: F401
 from src.monitoring.health import assess_health, HealthThresholds
 from src.monitoring.failure_log import log_failure
 import os

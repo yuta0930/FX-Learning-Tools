@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+import _bootstrap  # noqa: F401
 from src.monitoring.observability import export_periodic_report, load_logs
 
 

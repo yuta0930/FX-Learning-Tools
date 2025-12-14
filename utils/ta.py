@@ -99,8 +99,10 @@ def horizontal_levels(
         return []
 
     arr = np.asarray(prices, dtype=float).reshape(-1, 1)
-    # Cluster min_samples (DBSCAN density). Keep backward compatibility.
-    ms = max(3, int(min_samples))
+    # Cluster min_samples (DBSCAN density).
+    # 以前は安定性のために下限=3に強制していたが、テスト/用途に応じて1や2も許容する。
+    # （デフォルト min_samples=4 で従来挙動は維持）
+    ms = max(1, int(min_samples))
     # line_min_hits: DBSCANクラスタから水平線として採用するための最小ヒット数（未指定時は min_samples と同一）
     # Line adoption threshold: if None, fall back to cluster min_samples (legacy behavior)
     lm_hits = int(line_min_hits) if (line_min_hits is not None and int(line_min_hits) > 0) else ms

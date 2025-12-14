@@ -4,6 +4,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
+import _bootstrap  # noqa: F401
 from config.loader import get_config
 from src.monitoring.logs import plot_reliability
 

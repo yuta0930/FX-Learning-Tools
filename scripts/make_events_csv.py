@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 import yaml
 
+import _bootstrap  # noqa: F401
 from src.core.events import load_events_yaml, events_to_df, write_events_csv
 from src.core.events_schema import validate_events_payload
 

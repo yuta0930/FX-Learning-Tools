@@ -10,15 +10,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 
-import sys, os
-
-# Make repository paths importable when running as a script
-_HERE = os.path.dirname(__file__)
-_ROOT = os.path.abspath(os.path.join(_HERE, os.pardir))
-_SRC = os.path.join(_ROOT, "src")
-for p in (_ROOT, _SRC):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+import _bootstrap  # noqa: F401
 
 from src.core.ta import add_atr_if_missing
 from src.patterns.flag_pennant import detect_flag_pennant_simplified, FlagPennantSignal

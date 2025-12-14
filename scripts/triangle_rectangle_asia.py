@@ -3,20 +3,12 @@ from __future__ import annotations
 import os
 import math
 from typing import List, Dict, Any, Optional, Tuple
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-# Make repository paths importable when running as a script
-import sys
-from pathlib import Path
-_HERE = os.path.dirname(__file__)
-_ROOT = os.path.abspath(os.path.join(_HERE, os.pardir))
-_SRC = os.path.join(_ROOT, "src")
-for p in (_ROOT, _SRC):
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
+import _bootstrap  # noqa: F401
 from src.core.ta import add_atr_if_missing  # noqa: E402
 
 

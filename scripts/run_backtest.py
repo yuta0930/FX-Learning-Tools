@@ -4,6 +4,7 @@ import json
 import joblib
 import pandas as pd
 import numpy as np
+import _bootstrap  # noqa: F401
 from config.loader import get_config
 from src.backtest.walkforward import WalkForward, WFConfig
 from src.monitoring.metrics import brier_score, ece_score

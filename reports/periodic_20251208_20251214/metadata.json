@@ -1,12 +1,14 @@
 {
-  "generated_at": "2025-12-14T21:54:59.409307",
-  "year_month": "202512",
-  "time_range": {
-    "min": null,
-    "max": null
+  "generated_at": "2025-12-14T21:54:29.004617",
+  "period": {
+    "start": "2025-12-08",
+    "end": "2025-12-14"
   },
   "rows": 0,
-  "sources": [],
+  "sources": [
+    "logs\\executions.parquet",
+    "logs\\trades.parquet"
+  ],
   "git_commit": "bef7460",
   "config_hashes": {
     "config\\config.yml": "252bc90d3e2cb251a7cc011370f24c430e6d5d132d06059cade3661a476aaf5d",
@@ -14,8 +16,9 @@
     "config\\reasons_map.yml": "4ac23a7ebdc5f318e0ecfc3f242fd86e8b636f6d3c557eed57f56e6795a9bef3"
   },
   "artifacts": {
-    "daily_csv": "reports\\monthly_202512\\daily.csv",
-    "top_reasons_csv": "reports\\monthly_202512\\top_reasons.csv"
+    "daily_csv": "reports\\periodic_20251208_20251214\\daily.csv",
+    "top_reasons_csv": "reports\\periodic_20251208_20251214\\top_reasons.csv",
+    "top_reasons_normalized_csv": "reports\\periodic_20251208_20251214\\top_reasons_normalized.csv"
   },
   "notes": "Empty inputs produce empty CSVs with headers; safe No-Op by design."
 }

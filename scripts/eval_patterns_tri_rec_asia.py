@@ -10,13 +10,7 @@ from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
 import pandas as pd
 
-import sys
-_HERE = os.path.dirname(__file__)
-_ROOT = os.path.abspath(os.path.join(_HERE, os.pardir))
-_SRC = os.path.join(_ROOT, "src")
-for p in (_ROOT, _SRC):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+import _bootstrap  # noqa: F401
 
 from src.core.ta import add_atr_if_missing  # noqa: E402
 from scripts.triangle_rectangle_asia import run_detection  # noqa: E402

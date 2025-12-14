@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import _bootstrap  # noqa: F401
 from src.monitoring.observability import export_last_week, export_this_week, load_logs
 
 
