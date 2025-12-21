@@ -154,9 +154,98 @@ def predict_with_session_theta(df_feats: pd.DataFrame,
     return: DataFrame[timestamp, proba(0-1), theta, signal(0/1), session]
     """
     _check_bars_per_day_consistency(df_feats, meta)
-    assert list(df_feats[use_cols].columns) == list(use_cols), \
-        f"推論時の特徴量列が一致しません: {df_feats[use_cols].columns} vs {use_cols}"
-    X = df_feats[use_cols].values.astype(float)
+
+    # --- Feature alignment (train/serve skew guard) ---
+    # Some sklearn estimators/pipelines expose feature_names_in_. Prefer that over caller-provided use_cols.
+    # This prevents "X has N features, but StandardScaler is expecting M" when one extra column leaks in.
+    expected_cols = None
+    try:
+        if hasattr(model, "feature_names_in_") and model.feature_names_in_ is not None:
+            expected_cols = list(model.feature_names_in_)
+    except Exception:
+        expected_cols = None
+    if expected_cols is None:
+        # Try common pipeline step (e.g., scaler)
+        for attr in ("named_steps",):
+            try:
+                steps = getattr(model, attr, None)
+                if isinstance(steps, dict):
+                    scaler = steps.get("scaler")
+                    if scaler is not None and hasattr(scaler, "feature_names_in_") and scaler.feature_names_in_ is not None:
+                        expected_cols = list(scaler.feature_names_in_)
+                        break
+            except Exception:
+                pass
+
+    eff_cols = list(expected_cols) if expected_cols else list(use_cols)
+
+    # If we still don't know exact names, at least match expected feature count.
+    # CalibratedClassifierCV / wrappers may hide the underlying scaler's feature_names_in_.
+    def _get_expected_n_features(m):
+        for attr in ("n_features_in_",):
+            try:
+                v = getattr(m, attr, None)
+                if isinstance(v, (int, np.integer)) and int(v) > 0:
+                    return int(v)
+            except Exception:
+                pass
+        # Try nested estimators commonly used by sklearn
+        for nested_attr in ("base_estimator", "estimator", "calibrated_classifiers_", "classifier", "model"):
+            try:
+                nested = getattr(m, nested_attr, None)
+            except Exception:
+                nested = None
+            if nested is None:
+                continue
+            # calibrated_classifiers_ is a list of internal calibrated estimators
+            if isinstance(nested, list) and nested:
+                for item in nested:
+                    n = _get_expected_n_features(item)
+                    if n is not None:
+                        return n
+            else:
+                n = _get_expected_n_features(nested)
+                if n is not None:
+                    return n
+        return None
+
+    expected_n = _get_expected_n_features(model)
+    if expected_cols is None and expected_n is not None and len(eff_cols) != expected_n:
+        # Heuristic: drop trailing extras (most common when a new feature was appended).
+        if len(eff_cols) > expected_n:
+            dropped = eff_cols[expected_n:]
+            eff_cols = eff_cols[:expected_n]
+            print(f"[warn] adjusted use_cols by expected n_features_in_={expected_n}; dropped={dropped}")
+
+    # Make a defensive copy to avoid mutating caller frame.
+    dfX = df_feats.copy()
+    missing = [c for c in eff_cols if c not in dfX.columns]
+    extra = [c for c in dfX.columns if c not in eff_cols and c != "timestamp"]
+    if missing:
+        # Fill missing features with 0.0 (safe default). If this happens frequently, retraining is recommended.
+        for c in missing:
+            dfX[c] = 0.0
+    # Drop extras (except timestamp used for output/session inference)
+    if extra:
+        dfX = dfX.drop(columns=extra)
+
+    if missing or extra:
+        # Soft visibility: helps diagnose why probabilities become flat/NaN after alignment.
+        # Keep as print to avoid hard dependency on streamlit logger.
+        print(
+            f"[warn] feature alignment applied: missing_filled={len(missing)} extra_dropped={len(extra)} "
+            f"(missing={missing[:5]}{'...' if len(missing)>5 else ''}, "
+            f"extra={extra[:5]}{'...' if len(extra)>5 else ''})"
+        )
+
+    # Reorder and validate
+    if list(dfX[eff_cols].columns) != list(eff_cols):
+        raise AssertionError(
+            "推論時の特徴量列が一致しません: "
+            f"expected={eff_cols} actual={list(dfX[eff_cols].columns)} "
+            f"(missing_filled={missing}, extra_dropped={extra})"
+        )
+    X = dfX[eff_cols].values.astype(float)
     proba = model.predict_proba(X)[:, 1].astype(float)
 
     # 念のためのクリップ（数値誤差対策）

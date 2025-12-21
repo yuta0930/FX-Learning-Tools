@@ -229,13 +229,22 @@ def build_level_break_prob_table_cached(
     Invalidation triggers: different levels set, feature ordering, touch_buffer, N_recent, global threshold.
     """
     if not cache:
-        return build_level_break_prob_table(
-            df=df, ts_now=ts_now, use_levels=use_levels, use_cols=use_cols,
-            touch_buffer=touch_buffer, model=model, meta=meta,
-            make_features_for_level=make_features_for_level,
-            predict_with_session_theta=predict_with_session_theta,
-            N_recent=N_recent, debug=debug, hard_assert=hard_assert,
-        )
+        try:
+            return build_level_break_prob_table(
+                df=df, ts_now=ts_now, use_levels=use_levels, use_cols=use_cols,
+                touch_buffer=touch_buffer, model=model, meta=meta,
+                make_features_for_level=make_features_for_level,
+                predict_with_session_theta=predict_with_session_theta,
+                N_recent=N_recent, debug=debug, hard_assert=hard_assert,
+            )
+        except Exception as e:
+            import traceback
+            msg = f"build_level_break_prob_table failed (cache disabled): {e}"
+            tb = traceback.format_exc()
+            setattr(build_level_break_prob_table_cached, "_last_error", msg)
+            setattr(build_level_break_prob_table_cached, "_last_traceback", tb)
+            print(f"[error] {msg}\n{tb}")
+            return pd.DataFrame(columns=["level", "P_up", "P_dn"])
 
     if len(df) == 0:
         return pd.DataFrame(columns=["level","P_up","P_dn"])
@@ -275,13 +284,22 @@ def build_level_break_prob_table_cached(
     if key in store:
         return store[key]
 
-    result = build_level_break_prob_table(
-        df=df, ts_now=ts_now, use_levels=use_levels, use_cols=use_cols,
-        touch_buffer=touch_buffer, model=model, meta=meta,
-        make_features_for_level=make_features_for_level,
-        predict_with_session_theta=predict_with_session_theta,
-        N_recent=N_recent, debug=debug, hard_assert=hard_assert,
-    )
+    try:
+        result = build_level_break_prob_table(
+            df=df, ts_now=ts_now, use_levels=use_levels, use_cols=use_cols,
+            touch_buffer=touch_buffer, model=model, meta=meta,
+            make_features_for_level=make_features_for_level,
+            predict_with_session_theta=predict_with_session_theta,
+            N_recent=N_recent, debug=debug, hard_assert=hard_assert,
+        )
+    except Exception as e:
+        import traceback
+        msg = f"build_level_break_prob_table failed: {e}"
+        tb = traceback.format_exc()
+        setattr(build_level_break_prob_table_cached, "_last_error", msg)
+        setattr(build_level_break_prob_table_cached, "_last_traceback", tb)
+        print(f"[error] {msg}\n{tb}")
+        result = pd.DataFrame(columns=["level", "P_up", "P_dn"])
     store[key] = result
     # Avoid unbounded growth
     if len(store) > 128:

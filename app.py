@@ -7309,6 +7309,21 @@ if show_break_prob:
                 use_levels = list(score_df.sort_values("score", ascending=False)["level"].astype(float))
             else:
                 use_levels = list(levels) if levels else []
+
+            # Fallback: レベルが 0 件なら、直近価格帯から簡易的に候補を生成（UIが空にならないための最低限）
+            if not use_levels:
+                try:
+                    c0 = float(df["close"].iloc[-1])
+                    # JPY想定: 0.05刻み（約5pips）。必要なら後でUIパラメータ化。
+                    step = 0.05
+                    half_span = 10  # ±10段 = ±0.5
+                    base = round(c0 / step) * step
+                    use_levels = [float(base + i * step) for i in range(-half_span, half_span + 1)]
+                    # 安全: 重複除去・範囲内のみ
+                    use_levels = sorted({round(float(x), 3) for x in use_levels})
+                    st.info(f"レベル未検出のためフォールバック生成: close={c0:.3f} / levels={len(use_levels)}")
+                except Exception:
+                    use_levels = []
             try:
                 # 水平線ブレイク確率テーブルの計算
                 from build_level_break_prob_table import build_level_break_prob_table_cached
@@ -7446,7 +7461,34 @@ if show_break_prob:
 
             # 期待値ランキングの計算部（該当箇所）
             exp_rows=[]
-            for _, r in prob_df.iterrows():
+            if prob_df is None or prob_df.empty:
+                st.warning(
+                    "ブレイク確率テーブルが空です（prob_df が None/empty）。"
+                    "レベル抽出(use_levels)が0件、特徴量生成/推論がスキップ、またはデータ本数不足の可能性があります。"
+                )
+                # Show last error from builder if available
+                try:
+                    from build_level_break_prob_table import build_level_break_prob_table_cached as _bl
+                    last_err = getattr(_bl, "_last_error", None)
+                    last_tb = getattr(_bl, "_last_traceback", None)
+                    if last_err:
+                        st.error(last_err)
+                    if last_tb:
+                        with st.expander("prob_df 生成エラー詳細", expanded=False):
+                            st.code(last_tb)
+                except Exception:
+                    pass
+            else:
+                try:
+                    st.caption(
+                        f"prob_df: rows={len(prob_df)} cols={list(prob_df.columns)} "
+                        f"nan_P_up={int(pd.isna(prob_df.get('P_up')).sum()) if 'P_up' in prob_df.columns else 'n/a'} "
+                        f"nan_P_dn={int(pd.isna(prob_df.get('P_dn')).sum()) if 'P_dn' in prob_df.columns else 'n/a'}"
+                    )
+                except Exception:
+                    pass
+
+            for _, r in (prob_df.iterrows() if (prob_df is not None and not prob_df.empty) else []):
                 lv = float(r["level"])
                 e_up, n_up = get_expected_for(lv, "long")
                 e_dn, n_dn = get_expected_for(lv, "short")
@@ -7516,9 +7558,26 @@ if show_break_prob:
                 })
 
             # 期待値ランキング表の表示
-            ev_df = (pd.DataFrame(exp_rows)
-                       .sort_values("best_EV", ascending=False)
-                       .reset_index(drop=True))
+            ev_df = pd.DataFrame(exp_rows)
+            # Guard: exp_rows が空/途中で欠落した場合でも UI を落とさない
+            if ev_df.empty:
+                ev_df = pd.DataFrame(columns=[
+                    "level","P_up","P_dn","prob_diff","uncertain",
+                    "E_pips_up","E_pips_dn","EV_up","EV_dn","best_action","best_EV",
+                    "samples_up","samples_dn","risk_allowed","risk_reason_jp",
+                ])
+            else:
+                # Ensure required columns exist
+                for c in ["EV_up", "EV_dn", "best_action"]:
+                    if c not in ev_df.columns:
+                        ev_df[c] = np.nan
+                if "best_EV" not in ev_df.columns:
+                    # Fallback reconstruction
+                    ev_df["best_EV"] = ev_df.apply(
+                        lambda r: r.get("EV_up") if r.get("best_action") == "BUY" else r.get("EV_dn"),
+                        axis=1,
+                    )
+                ev_df = ev_df.sort_values("best_EV", ascending=False).reset_index(drop=True)
 
             cols_show = ["level","P_up","P_dn","prob_diff","uncertain","E_pips_up","E_pips_dn","EV_up","EV_dn","best_action","best_EV","samples_up","samples_dn","risk_allowed","risk_reason_jp"]
             st.dataframe(
