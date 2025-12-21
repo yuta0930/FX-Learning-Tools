@@ -56,6 +56,51 @@ EPS = 1e-9
 FAST_MODE = False
 
 
+def _estimate_bars_per_day(ts: pd.Series) -> int:
+    """Estimate bars per day from timestamp median step.
+
+    This is used to convert embargo specified in bars to embargo specified in *day-groups*
+    for PurgedGroupTimeSeriesSplit.
+    """
+    s = pd.to_datetime(ts, errors="coerce").dropna()
+    if len(s) < 3:
+        return 96  # default 15m
+    deltas = s.diff().dropna().dt.total_seconds().values
+    if len(deltas) == 0:
+        return 96
+    step = float(np.median(deltas))
+    if step <= 0:
+        return 96
+    bars_per_day = int(round(86400.0 / step))
+    return max(1, min(24 * 60, bars_per_day))
+
+
+def _embargo_groups_from_bars(df: pd.DataFrame, embargo_bars: int) -> int:
+    """Convert embargo in bars to embargo in day-groups.
+
+    Current CV splitter operates on day-groups (freq='D').
+    We convert bars -> days by estimating bars/day from timestamps.
+    """
+    eb = int(max(0, embargo_bars))
+    if eb <= 0:
+        return 0
+    bpd = _estimate_bars_per_day(df["timestamp"])
+    # ceil to be conservative
+    return int(max(0, int(np.ceil(eb / float(bpd)))))
+
+
+def _embargo_meta_from_bars(df: pd.DataFrame, embargo_bars: int) -> dict:
+    """Compute embargo-related metadata for auditability."""
+    eb = int(max(0, embargo_bars))
+    bpd = _estimate_bars_per_day(df["timestamp"])
+    eg = 0 if eb <= 0 else int(max(0, int(np.ceil(eb / float(bpd)))))
+    return {
+        "embargo_bars": eb,
+        "bars_per_day_est": int(bpd),
+        "embargo_groups": int(eg),
+    }
+
+
 def _ensure_dir(path: str):
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -74,7 +119,14 @@ def winsorize_df(df: pd.DataFrame, clip: float = 5.0) -> pd.DataFrame:
 # ============================================================
 # データセット構築（特徴量 + ラベル）
 # ============================================================
-def make_dataset(raw: pd.DataFrame, horizon_bars: int, buffer_ratio: float, label_config: BreakLabelConfig) -> pd.DataFrame:
+def make_dataset(
+    raw: pd.DataFrame,
+    horizon_bars: int,
+    buffer_ratio: float,
+    label_config: BreakLabelConfig,
+    *,
+    enable_legacy_dir_features: bool = False,
+) -> pd.DataFrame:
     raw = raw.sort_values("timestamp").reset_index(drop=True)
 
 
@@ -87,21 +139,28 @@ def make_dataset(raw: pd.DataFrame, horizon_bars: int, buffer_ratio: float, labe
     feats = add_volatility_and_interactions(feats, raw_l, enable_poly=True)  # 多項特徴量も有効化
 
 
-    # 方向依存特徴量を必ず追加
-    # dir: +1（上方向）/-1（下方向）を交互に付与（例: 偶数行+1, 奇数行-1）
-    feats["dir"] = np.where(np.arange(len(feats)) % 2 == 0, 1, -1)
-    # dir_sign: dir列をコピー
-    feats["dir_sign"] = feats["dir"]
-    # dist_to_level: closeとhigh/lowの差をdirで反転
-    level = (raw["high"] + raw["low"]) / 2
-    feats["dist_to_level"] = (raw["close"] - level) * feats["dir"]
-    # atr_slope_dir: ATRの変化率にdirを掛ける
-    feats["atr_slope_dir"] = feats["atr"].diff().fillna(0.0) * feats["dir"]
-    # rsi_div_dir: RSIの変化率にdirを掛ける（RSIがなければ0）
-    if "rsi" in feats.columns:
-        feats["rsi_div_dir"] = feats["rsi"].diff().fillna(0.0) * feats["dir"]
-    else:
-        feats["rsi_div_dir"] = 0.0
+    # ------------------------------------------------------------
+    # Legacy direction-dependent features (DISABLED by default)
+    # ------------------------------------------------------------
+    # NOTE:
+    #   The previous implementation injected `dir` by row parity, which can artificially
+    #   inflate CV scores and creates train/serve skew risk.
+    #   Keep it behind an explicit flag for backward compatibility only.
+    if enable_legacy_dir_features:
+        # dir: +1（上方向）/-1（下方向）を交互に付与（例: 偶数行+1, 奇数行-1）
+        feats["dir"] = np.where(np.arange(len(feats)) % 2 == 0, 1, -1)
+        # dir_sign: dir列をコピー
+        feats["dir_sign"] = feats["dir"]
+        # dist_to_level: closeとhigh/lowの差をdirで反転
+        level = (raw["high"] + raw["low"]) / 2
+        feats["dist_to_level"] = (raw["close"] - level) * feats["dir"]
+        # atr_slope_dir: ATRの変化率にdirを掛ける
+        feats["atr_slope_dir"] = feats["atr"].diff().fillna(0.0) * feats["dir"]
+        # rsi_div_dir: RSIの変化率にdirを掛ける（RSIがなければ0）
+        if "rsi" in feats.columns:
+            feats["rsi_div_dir"] = feats["rsi"].diff().fillna(0.0) * feats["dir"]
+        else:
+            feats["rsi_div_dir"] = 0.0
 
     # 新規特徴量例: 直近20本の高値・安値比率、ATRの変化率
     feats["high_low_ratio_20"] = (raw["high"].rolling(20).max() / raw["low"].rolling(20).min()).fillna(1.0)
@@ -119,12 +178,9 @@ def make_dataset(raw: pd.DataFrame, horizon_bars: int, buffer_ratio: float, labe
 
 
 def get_Xy(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-    # 方向依存特徴量を必ず含める（dir_signも追加）
-    required_cols = ["dir", "dist_to_level", "atr_slope_dir", "rsi_div_dir", "dir_sign"]
+    # Legacy direction-dependent features are optional.
+    required_cols = []
     use_cols = [c for c in df.columns if c not in DROP_COLS]
-    for rc in required_cols:
-        if rc not in use_cols:
-            use_cols.append(rc)
     X = df[use_cols].values.astype(float)
     y = df["y"].astype(int).values
     return X, y, use_cols
@@ -542,7 +598,16 @@ def save_model(df: pd.DataFrame, use_cols: List[str], out_path: str):
     print(f"[model] saved -> {out_path} (mode={mode}, n={len(X)})")
 
 
-def save_meta(df: pd.DataFrame, ev: EVConfig, summary: Dict, out_path: str):
+def save_meta(
+    df: pd.DataFrame,
+    ev: EVConfig,
+    summary: Dict,
+    out_path: str,
+    *,
+    n_splits: int,
+    embargo_groups: int,
+    group_gap: int = 1,
+):
     _ensure_dir(out_path)
     ts_col = "timestamp"
     y = df["y"].astype(int).values
@@ -560,11 +625,27 @@ def save_meta(df: pd.DataFrame, ev: EVConfig, summary: Dict, out_path: str):
         "ev_per_trade": float((summary.get("oos_theta_eval") or {}).get("ev_per_trade", float("nan"))),
         "ev_cfg": asdict(ev),
         "features": summary["use_cols"],
-        "cv": {"kind": "PurgedWalkForward", "n_splits": int(5), "embargo": int(1)},
+        # NOTE: Keep CV meta aligned with actual training settings for reproducibility.
+        "cv": {
+            "kind": "PurgedGroupTimeSeriesSplit",
+            "freq": "D",
+            "n_splits": int(n_splits),
+            "group_gap": int(group_gap),
+            "embargo_groups": int(embargo_groups),
+        },
         "random_state": RNG_SEED,
         "trained_at": int(time.time()),
         "trained_at_iso": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Extra metadata for auditability
+    if isinstance(summary, dict):
+        if "label_cfg" in summary:
+            meta["label_cfg"] = summary["label_cfg"]
+        if "embargo_bars" in summary:
+            meta["embargo_bars"] = int(summary["embargo_bars"])
+        if "bars_per_day_est" in summary:
+            meta["bars_per_day_est"] = int(summary["bars_per_day_est"])
 
     # 追記: コスト感度・セッション別θ・レジーム別θ（後段で埋める）
     for k in ("ev_cost_sensitivity", "theta_by_session", "theta_by_session_regime"):
@@ -680,7 +761,10 @@ def run_training(args):
     print("[label audit] exported:", pos_csv, neg_csv)
 
     ev = EVConfig(R_win=args.R_win, R_loss=args.R_loss, cost_per_trade=args.cost_per_trade)
-    summary = train_eval_wf(df, n_splits=args.n_splits, embargo_groups=1, ev=ev)
+    # CV splitter operates on day-groups (freq='D'); convert embargo bars -> group count (days).
+    embargo_meta = _embargo_meta_from_bars(df, int(args.embargo_bars))
+    embargo_groups = int(embargo_meta["embargo_groups"])
+    summary = train_eval_wf(df, n_splits=args.n_splits, embargo_groups=embargo_groups, ev=ev)
     p_all = summary["p_all"]
     y_oos = summary["y_oos"]
 
@@ -696,6 +780,14 @@ def run_training(args):
     cfg = get_config()
     ev_cost_sens = sweep_cost_sensitivity(p_all, ev, costs=tuple(cfg.cost_sensitivity.costs))
     summary["ev_cost_sensitivity"] = ev_cost_sens
+
+    # Audit: persist label/cv knobs that affect data leakage and reproducibility.
+    try:
+        summary["label_cfg"] = asdict(label_config)
+    except Exception:
+        pass
+    # Keep audit-friendly embargo conversion details.
+    summary.update(embargo_meta)
 
     # ============================================================
     # モデル品質ガード
@@ -783,7 +875,15 @@ def run_training(args):
     print("[quality][OK] モデル品質基準を満たしました -> 保存を継続")
 
     save_model(df, summary["use_cols"], args.model_out)
-    save_meta(df, ev, {k: summary[k] for k in summary if k != "cv_df"}, args.meta_out)
+    save_meta(
+        df,
+        ev,
+        {k: summary[k] for k in summary if k != "cv_df"},
+        args.meta_out,
+        n_splits=int(args.n_splits),
+        embargo_groups=int(embargo_groups),
+        group_gap=1,
+    )
     _append_model_history("passed", None)
     # --- New: emit base calibrator artifact from OOF probs (for online calibration bootstrap) ---
     try:

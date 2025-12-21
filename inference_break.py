@@ -8,6 +8,61 @@ import json
 import os
 import hashlib
 
+
+def _estimate_bars_per_day(ts: pd.Series) -> int:
+    """Estimate bars/day from timestamp median step.
+
+    Mirrors training-side estimation to detect train/serve skew.
+    """
+    s = pd.to_datetime(ts, errors="coerce").dropna()
+    if len(s) < 3:
+        return 96
+    deltas = s.diff().dropna().dt.total_seconds().values
+    if len(deltas) == 0:
+        return 96
+    step = float(np.median(deltas))
+    if step <= 0:
+        return 96
+    bpd = int(round(86400.0 / step))
+    return max(1, min(24 * 60, bpd))
+
+
+def _check_bars_per_day_consistency(df_feats: pd.DataFrame, meta: dict) -> str | None:
+    """Warn (or raise) if bars/day differs between training meta and inference input.
+
+    Returns:
+        warning message (str) if mismatch is detected in non-strict mode, else None.
+    """
+    if not isinstance(meta, dict):
+        return None
+    expected = meta.get("bars_per_day_est")
+    if expected is None:
+        return None
+    if "timestamp" not in df_feats.columns:
+        return None
+
+    expected_i = int(expected)
+    current_i = int(_estimate_bars_per_day(df_feats["timestamp"]))
+    if expected_i <= 0 or current_i <= 0:
+        return None
+
+    # tolerate small differences (DST / slight irregularities), but flag clear mismatches
+    ratio = current_i / float(expected_i)
+    ok = 0.8 <= ratio <= 1.25
+    if ok:
+        return None
+
+    msg = (
+        f"bars/day mismatch: meta bars_per_day_est={expected_i}, "
+        f"inference bars_per_day_est={current_i} (ratio={ratio:.2f}). "
+        "This may indicate timeframe mismatch or irregular timestamps."
+    )
+    strict = str(os.getenv("STRICT_BARS_PER_DAY", "0")).lower() in {"1", "true", "yes", "y"}
+    if strict:
+        raise RuntimeError(msg)
+    print(f"[warn] {msg}")
+    return msg
+
 def _sha256_of_file(path: str) -> str:
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -98,6 +153,7 @@ def predict_with_session_theta(df_feats: pd.DataFrame,
     """
     return: DataFrame[timestamp, proba(0-1), theta, signal(0/1), session]
     """
+    _check_bars_per_day_consistency(df_feats, meta)
     assert list(df_feats[use_cols].columns) == list(use_cols), \
         f"推論時の特徴量列が一致しません: {df_feats[use_cols].columns} vs {use_cols}"
     X = df_feats[use_cols].values.astype(float)

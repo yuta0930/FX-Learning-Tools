@@ -82,18 +82,38 @@
 		{
 			"label": "Lint (ruff)",
 			"type": "shell",
-			"command": "python -m ruff check .",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"-m",
+				"ruff",
+				"check",
+				"."
+			],
 			"problemMatcher": "$python"
 		},
 		{
 			"label": "Format (black)",
 			"type": "shell",
-			"command": "python -m black ."
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"-m",
+				"black",
+				"."
+			]
 		},
 		{
 			"label": "Type check (mypy light)",
 			"type": "shell",
-			"command": "python -m mypy --config-file mypy.ini src/core src/policy tests",
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"-m",
+				"mypy",
+				"--config-file",
+				"mypy.ini",
+				"src/core",
+				"src/policy",
+				"tests"
+			],
 			"problemMatcher": "$python"
 		},
 		{
@@ -172,7 +192,29 @@
 		{
 			"label": "Quick checks (lint → mypy → fast tests)",
 			"type": "shell",
-			"command": "python -m ruff check . && python -m mypy --config-file mypy.ini src/core src/policy tests && python -m pytest -q -k \"fast or safety or filters or pipeline or observability\""
+			"command": "C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+			"args": [
+				"-m",
+				"ruff",
+				"check",
+				".",
+				"&&",
+				"C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+				"-m",
+				"mypy",
+				"--config-file",
+				"mypy.ini",
+				"src/core",
+				"src/policy",
+				"tests",
+				"&&",
+				"C:/Users/daiki/OneDrive/fx2/FX-Learning-Tools/env/Scripts/python.exe",
+				"-m",
+				"pytest",
+				"-q",
+				"-k",
+				"fast or safety or filters or pipeline or observability"
+			]
 		},
 		{
 			"label": "Health check (1d)",

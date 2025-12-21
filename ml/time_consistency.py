@@ -9,9 +9,27 @@ except Exception:
     compute_level_relative_features = None
 
 @dataclass
-class BreakLabelConfig:
-    horizon_bars: int = 12       # H=12（15分足なら3時間先）
-    buffer_ratio: float = 0.0005 # 例: 0.05% = 0.0005（元の0.05が5%を意味していたなら調整）
+class LegacyBreakLabelConfig:
+        """Legacy label config kept for backward compatibility.
+
+        IMPORTANT:
+            The canonical break label definition for training/inference is
+            `label_break.BreakLabelConfig`.
+
+        This legacy struct exists only to avoid name-collisions and accidental
+        imports during audits.
+        """
+
+        horizon_bars: int = 12
+        buffer_ratio: float = 0.0005
+
+# Backward-compatible alias.
+#
+# Some legacy entrypoints (e.g. sweep_labels.py, ai_train_direction.py) import
+# `BreakLabelConfig` from this module. The project-wide canonical config lives
+# in `label_break.BreakLabelConfig`, but for the legacy label generator below
+# we keep this alias to avoid breaking older scripts.
+BreakLabelConfig = LegacyBreakLabelConfig
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -90,7 +108,7 @@ def true_range_atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
     atr = tr.ewm(alpha=1.0/float(n), adjust=False).mean()
     return atr
 
-def build_break_labels(df: pd.DataFrame, cfg: BreakLabelConfig) -> pd.Series:
+def build_break_labels(df: pd.DataFrame, cfg: LegacyBreakLabelConfig) -> pd.Series:
     """
     “ブレイク成功”の例：現在のクローズから先H本の間に
     +buffer*ATR以上の上抜け（or 下抜け）に達したかで2値化。

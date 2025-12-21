@@ -6,6 +6,150 @@ import os
 # Centralized timezone helpers
 from utils.time_utils import JST, to_jst
 import logging
+from utils.timeframe_profile import bars_per_day, recommended_refresh_secs
+
+
+def _maybe_autoswitch_timeframe_profile() -> None:
+    """Apply timeframe profile when interval changes.
+
+    Intended behavior:
+    - When user selects 60m, switch defaults to hourly-friendly values.
+    - Do NOT overwrite user-customized values repeatedly.
+    """
+    try:
+        interval = str(st.session_state.get("interval", "15m"))
+    except Exception:
+        interval = "15m"
+
+    # Detect change
+    prev = st.session_state.get("_last_interval_for_profile")
+    if prev == interval:
+        return
+    st.session_state["_last_interval_for_profile"] = interval
+
+    # Mark that we auto-managed some defaults (user can still override later)
+    st.session_state["bars_per_day"] = bars_per_day(interval)
+
+    # Refresh default: only set if user hasn't set it yet
+    if "refresh_secs" not in st.session_state:
+        st.session_state["refresh_secs"] = recommended_refresh_secs(interval)
+    else:
+        # If the existing value equals a previous recommended value, update it.
+        try:
+            old = int(st.session_state.get("refresh_secs"))
+            if prev is None or old == recommended_refresh_secs(str(prev)):
+                st.session_state["refresh_secs"] = recommended_refresh_secs(interval)
+        except Exception:
+            pass
+
+    # Default data path: only adjust if it was still the old default
+    try:
+        cur_path = str(st.session_state.get("default_data_path", "data/USDJPY_15m.csv"))
+    except Exception:
+        cur_path = "data/USDJPY_15m.csv"
+    if interval in {"60m", "1h"}:
+        if cur_path.replace("\\", "/") in {"data/usdjpy_15m.csv", "data/USDJPY_15m.csv"}:
+            st.session_state["default_data_path"] = "data/USDJPY_60m.csv"
+        # --- 1h profile (requested): regression lookback & DBSCAN eps ---
+        # Only overwrite if user hasn't customized them (or they were still on the previous recommended defaults).
+        try:
+            prev_reg_default = 40 if str(prev).strip().lower() == "15m" else None
+        except Exception:
+            prev_reg_default = None
+        try:
+            prev_eps_default = 0.08 if str(prev).strip().lower() == "15m" else None
+        except Exception:
+            prev_eps_default = None
+
+        # regression lookback
+        if "reg_lookback" not in st.session_state:
+            st.session_state["reg_lookback"] = 96
+        else:
+            try:
+                cur_val = int(st.session_state.get("reg_lookback"))
+                if prev_reg_default is None or cur_val == int(prev_reg_default):
+                    st.session_state["reg_lookback"] = 96
+            except Exception:
+                pass
+
+        # DBSCAN eps (price)
+        if "dbscan_eps" not in st.session_state:
+            st.session_state["dbscan_eps"] = 0.10
+        else:
+            try:
+                cur_val = float(st.session_state.get("dbscan_eps"))
+                if prev_eps_default is None or abs(cur_val - float(prev_eps_default)) < 1e-12:
+                    st.session_state["dbscan_eps"] = 0.10
+            except Exception:
+                pass
+
+        # --- Zoom defaults for 1h profile ---
+        # Keep existing behavior: if user is still on the 15m default (100), move to 1h default (250)
+        if "zoom_recent_n" not in st.session_state:
+            st.session_state["zoom_recent_n"] = 250
+        else:
+            try:
+                cur_zoom_n = int(st.session_state.get("zoom_recent_n"))
+                if str(prev).strip().lower() == "15m" and cur_zoom_n == 100:
+                    st.session_state["zoom_recent_n"] = 250
+            except Exception:
+                pass
+
+        # y margin: default is currently 0 for both 15m/1h, but keep it explicit for symmetry
+        if "y_zoom_margin_pct" not in st.session_state:
+            st.session_state["y_zoom_margin_pct"] = 0
+    elif interval == "15m":
+        if cur_path.replace("\\", "/") in {"data/usdjpy_60m.csv", "data/USDJPY_60m.csv"}:
+            st.session_state["default_data_path"] = "data/USDJPY_15m.csv"
+        # 15m profile defaults (keep backward-compatible)
+        # If user comes back from 1h to 15m, revert to 15m defaults
+        # as long as the current values are still the 1h recommended defaults.
+        prev_norm = str(prev).strip().lower() if prev is not None else ""
+
+        # regression lookback (15m default: 40, 1h default: 96)
+        if "reg_lookback" not in st.session_state:
+            st.session_state["reg_lookback"] = 40
+        else:
+            try:
+                cur_val = int(st.session_state.get("reg_lookback"))
+                if prev_norm in {"60m", "1h"} and cur_val == 96:
+                    st.session_state["reg_lookback"] = 40
+            except Exception:
+                pass
+
+        # DBSCAN eps (15m default: 0.08, 1h default: 0.10)
+        if "dbscan_eps" not in st.session_state:
+            st.session_state["dbscan_eps"] = 0.08
+        else:
+            try:
+                cur_val = float(st.session_state.get("dbscan_eps"))
+                if prev_norm in {"60m", "1h"} and abs(cur_val - 0.10) < 1e-12:
+                    st.session_state["dbscan_eps"] = 0.08
+            except Exception:
+                pass
+
+        # --- Zoom defaults for 15m profile ---
+        # zoom_recent_n: 15m default is 100, 1h default is 250
+        if "zoom_recent_n" not in st.session_state:
+            st.session_state["zoom_recent_n"] = 100
+        else:
+            try:
+                cur_zoom_n = int(st.session_state.get("zoom_recent_n"))
+                if prev_norm in {"60m", "1h"} and cur_zoom_n == 250:
+                    st.session_state["zoom_recent_n"] = 100
+            except Exception:
+                pass
+
+        # y_zoom_margin_pct: currently defaults to 0; revert when coming back if it was on 1h default
+        if "y_zoom_margin_pct" not in st.session_state:
+            st.session_state["y_zoom_margin_pct"] = 0
+        else:
+            try:
+                cur_margin = int(st.session_state.get("y_zoom_margin_pct"))
+                if prev_norm in {"60m", "1h"} and cur_margin == 0:
+                    st.session_state["y_zoom_margin_pct"] = 0
+            except Exception:
+                pass
 
 # --- Logging setup (lightweight) ---
 logger = logging.getLogger("fx.app")
@@ -164,28 +308,8 @@ try:
 except Exception:
     pass
 
-# --- データソース（任意）: アプリ本体からもパスを切り替え可能にする ---
-try:
-    import streamlit as _st
-    with _st.expander("データソース (任意) ⚙", expanded=False):
-        cur_path = _st.session_state.get("default_data_path", "data/USDJPY_15m.csv")
-        _st.write(f"現在のパス: {cur_path}")
-        new_path = _st.text_input("CSV/Parquetのパスを指定", value=str(cur_path), key="app_ds_input_path")
-        c_ds1, c_ds2 = _st.columns([1,1])
-        with c_ds1:
-            if _st.button("パスを適用", key="app_ds_apply"):
-                _st.session_state["default_data_path"] = new_path
-                _st.success(f"データパスを更新しました: {new_path}")
-        with c_ds2:
-            if _st.button("キャッシュクリア", key="app_ds_clear_cache"):
-                try:
-                    _st.cache_data.clear()
-                    _st.success("キャッシュをクリアしました。再描画してください。")
-                except Exception as _e:
-                    _st.info(f"キャッシュクリアに失敗: {_e}")
-except Exception:
-    pass
-from inference_break import load_break_meta
+from app.dashboard.data_source_panel import render_data_source_panel
+render_data_source_panel()
 from config.loader import get_config
 from risk_guard import (
     make_guard_from_config,
@@ -200,55 +324,7 @@ from src.core.market_profile import (
 )
 import math
 
-# --- ATR 計算ユーティリティ（単純版）---
-def compute_latest_atr(price_df, period: int = 14):
-    try:
-        import pandas as pd  # 局所 import （存在しない場合は上位で失敗しているはず）
-        req = {"high","low","close"}
-        cols_lower = {c.lower() for c in price_df.columns}
-        if not req.issubset(cols_lower):
-            return float('nan')
-        df = price_df.copy()
-        ren = {}
-        for c in df.columns:
-            lc = c.lower()
-            if lc in req:
-                ren[c] = lc
-        if ren:
-            df = df.rename(columns=ren)
-        # 末尾の未完成バー（high/low/closeのいずれかがNaN）を除外
-        try:
-            hh = pd.to_numeric(df['high'], errors='coerce').astype(float)
-            ll = pd.to_numeric(df['low'], errors='coerce').astype(float)
-            cc = pd.to_numeric(df['close'], errors='coerce').astype(float)
-            mask = hh.notna() & ll.notna() & cc.notna()
-            if len(mask) > 0 and not bool(mask.iloc[-1]):
-                # 末尾から有効な行まで切り落とし
-                last_valid_idx = mask[::-1].idxmax()
-                if pd.notna(last_valid_idx):
-                    df = df.loc[:last_valid_idx]
-        except Exception:
-            pass
-        hl = (df['high'] - df['low']).abs()
-        pc = df['close'].shift(1)
-        h_pc = (df['high'] - pc).abs()
-        l_pc = (df['low'] - pc).abs()
-        import pandas as _pd
-        tr = _pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-        # Wilder EWM for consistency
-        atr = tr.ewm(alpha=1.0/float(period), adjust=False).mean()
-        # 末尾がNaNなら、有効な直近の値を採用
-        if len(atr) == 0:
-            return float('nan')
-        val = atr.iloc[-1]
-        if not np.isfinite(val):
-            try:
-                val = atr.dropna().iloc[-1]
-            except Exception:
-                return float('nan')
-        return float(val) if np.isfinite(val) else float('nan')
-    except Exception:
-        return float('nan')
+from app.utils.atr import compute_latest_atr
 
 # --- ベースライン確率の読み込み（初期化 + 検証関数） ---
 import json
@@ -444,6 +520,7 @@ from policy.gate import apply_final_gate as _apply_final_gate_core
 # in_news = is_in_any_window(pred_df["timestamp"], windows_df[["start","end"]])
 # pred_df["trade_ok"] = (pred_df["signal"] == 1) & (~in_news)
 from inference_break import load_break_model, load_break_meta, predict_with_session_theta
+from app.dashboard.inference_warnings import warn_bars_per_day_mismatch
 from ev_cache import get_ev_tables
 
 # （重複の import を整理済み）
@@ -2182,6 +2259,9 @@ st.session_state["symbol"] = symbol
 st.session_state["period_raw"] = period_raw
 st.session_state["interval"] = interval
 
+# interval に応じて、足種プロファイル（bars/day・推奨更新間隔・既定データパス等）を自動反映
+_maybe_autoswitch_timeframe_profile()
+
 # 入力検証の設定（任意）
 with st.sidebar.expander("入力検証（CSV/価格）", expanded=False):
     st.session_state['enable_input_validation'] = st.checkbox("入力検証を有効化", value=st.session_state.get('enable_input_validation', True))
@@ -2215,84 +2295,13 @@ params = DecisionParams(
 
 # （整理）ここでのOANDA設定エリアは重複のため削除し、サイドバー終盤の発注設定と統合しました
 st.sidebar.markdown("---")
-st.sidebar.subheader("取引コスト設定（pips）")
-fee_commission = st.sidebar.number_input("手数料（往復）", min_value=0.0, max_value=5.0, value=0.00, step=0.01)
-fee_slippage  = st.sidebar.number_input("スリッページ（平均）", min_value=0.0, max_value=5.0, value=0.20, step=0.01)
-fee_gap       = st.sidebar.number_input("ギャップ控除（期待値）", min_value=0.0, max_value=10.0, value=0.00, step=0.01)
-extra_cost_pips = float(fee_commission + fee_slippage + fee_gap)
-
-st.sidebar.subheader("自動更新")
-auto_refresh = st.sidebar.checkbox("自動で再取得（ページ再読み込み）", value=True)
-refresh_secs = st.sidebar.slider("更新間隔（秒）", 30, 600, 180, help="15分足は60〜180秒が目安")
-try:
-    from streamlit_autorefresh import st_autorefresh
-    if auto_refresh:
-        st_autorefresh(interval=refresh_secs * 1000, limit=None, key="fx_autorefresh")
-except Exception:
-    if auto_refresh:
-        from streamlit.components.v1 import html
-        html(f"""<script>setTimeout(function(){{window.location.reload();}}, {int(refresh_secs*1000)});</script>""", height=0)
-
-st.sidebar.subheader("Auto params")
-auto_force = st.sidebar.checkbox(
-    "マーケットプロファイル自動調整を強制ON",
-    value=bool(st.session_state.get('auto_params_force_enabled', False)),
-    help="ConfigでOFFでも、このチェックを入れるとMarketProfile由来のθ/ATR/リスク調整を適用します。"
-)
-st.session_state['auto_params_force_enabled'] = bool(auto_force)
-
-with st.sidebar.expander("⚙️ Auto params status", expanded=False):
-    auto_enabled = bool(st.session_state.get('auto_params_enabled', False))
-    auto_cfg_enabled = bool(st.session_state.get('auto_params_config_enabled', auto_enabled))
-    auto_override = bool(st.session_state.get('auto_params_override_active', False))
-    status_badge = "🟢 ON" if auto_enabled else "⚪ OFF"
-    st.markdown(f"**Enabled:** {status_badge}")
-    st.write(
-        f"config: {'ON' if auto_cfg_enabled else 'OFF'}  |  override toggle: {'ON' if auto_override else 'OFF'}"
-    )
-
-    profile = st.session_state.get('market_profile')
-    session_label = getattr(profile, 'session', None) if profile else None
-    atr_regime = getattr(profile, 'atr_regime', None) if profile else None
-    theta_effective = st.session_state.get('theta_base_effective')
-    theta_offset = st.session_state.get('theta_auto_offset')
-    atr_override = st.session_state.get('atr_filter_override', {}) or {}
-    atr_min = atr_override.get('min')
-    atr_max = atr_override.get('max')
-    guard_override = bool(st.session_state.get('risk_guard_override_active', False))
-
-    def _fmt_num(val, digits=3):
-        if isinstance(val, (int, float)) and np.isfinite(val):
-            return f"{float(val):.{digits}f}"
-        return "-"
-
-    st.caption("現在のマーケットプロファイル")
-    st.write(
-        f"Session: {session_label or '-'}  |  ATR regime: {atr_regime or '-'}"
-    )
-
-    st.caption("θ & ATR オーバーライド")
-    st.write(
-        f"θ base eff: {_fmt_num(theta_effective)}"
-    )
-    st.write(
-        f"θ offset: {_fmt_num(theta_offset)}"
-    )
-    st.write(
-        f"ATR filter: {_fmt_num(atr_min, 4)} 〜 {_fmt_num(atr_max, 4)}"
-    )
-
-    st.caption("Risk guard")
-    guard_badge = "🟢 override active" if guard_override else "⚪ base config"
-    st.write(guard_badge)
-    if guard_override:
-        cfg = st.session_state.get('risk_guard_current_cfg')
-        if cfg is not None:
-            st.write(
-                f"max/day: {cfg.max_trades_per_day} | max/session: {cfg.max_trades_per_session} | loss→cooldown: {cfg.max_consecutive_losses}"
-            )
+from app.dashboard.sidebar_settings import render_cost_and_refresh_and_auto_params
+extra_cost_pips = float(render_cost_and_refresh_and_auto_params(interval=str(interval)))
 
 st.sidebar.markdown("---")
+from app.dashboard.leakage_report import render_leakage_suspects_report_sidebar
+render_leakage_suspects_report_sidebar()
+
 # 表示密度（チャートx軸の詰め表示）
 compact_weekend = st.sidebar.checkbox(
     "金曜-月曜を詰めて表示（等間隔）",
@@ -2300,21 +2309,69 @@ compact_weekend = st.sidebar.checkbox(
     help="x軸をカテゴリ扱いにして、週末などの時間ギャップを完全に詰めて表示します（バー間隔は常に等間隔）。"
 )
 # 以前の「自動更新時のズーム保持」機能は廃止しました
+_interval_for_zoom = str(st.session_state.get("interval", interval))
+
+# 1時間足(60m)は“少し引き気味”が見やすいので、既定の表示本数を多めにする
+_default_zoom_n = 100
+if _interval_for_zoom in ("60m", "1h", "H1"):
+    _default_zoom_n = 250
+
+if "zoom_recent_175" not in st.session_state:
+    st.session_state["zoom_recent_175"] = True
+if "zoom_recent_n" not in st.session_state:
+    st.session_state["zoom_recent_n"] = _default_zoom_n
+
 zoom_recent_175 = st.sidebar.checkbox(
     "直近N本にズーム",
-    value=True,
+    value=bool(st.session_state.get("zoom_recent_175", True)),
     help="表示のたびに指定本数が収まるように自動ズームします。"
 )
+st.session_state["zoom_recent_175"] = bool(zoom_recent_175)
+
 zoom_recent_n = st.sidebar.slider(
     "直近本数 (N)",
-    min_value=50, max_value=300, value=100, step=5,
+    min_value=50, max_value=300,
+    value=int(st.session_state.get("zoom_recent_n", _default_zoom_n)),
+    step=5,
     help="ズーム対象とする直近の本数を選択します。"
 )
+st.session_state["zoom_recent_n"] = int(zoom_recent_n)
+
+# 60mへ切り替えた瞬間だけ、ユーザーが未変更なら“引き気味”既定へ寄せる
+try:
+    prev_iv = st.session_state.get("_last_interval_for_zoom")
+    if prev_iv != _interval_for_zoom:
+        st.session_state["_last_interval_for_zoom"] = _interval_for_zoom
+        if _interval_for_zoom in ("60m", "1h", "H1") and int(st.session_state.get("zoom_recent_n", 0)) == 100:
+            st.session_state["zoom_recent_n"] = _default_zoom_n
+except Exception:
+    pass
+
+# y軸余白: ユーザー要望により 60m でも 0% を既定にする
+_default_y_zoom_margin_pct = 0
+if _interval_for_zoom in ("60m", "1h", "H1"):
+    _default_y_zoom_margin_pct = 0
+
+if "y_zoom_margin_pct" not in st.session_state:
+    st.session_state["y_zoom_margin_pct"] = _default_y_zoom_margin_pct
+try:
+    prev_y_iv = st.session_state.get("_last_interval_for_y_margin")
+    if prev_y_iv != _interval_for_zoom:
+        st.session_state["_last_interval_for_y_margin"] = _interval_for_zoom
+        # 15m既定(0%)をそのまま使っていた場合のみ、60m既定へ（現在は同値なので実質no-op）
+        if _interval_for_zoom in ("60m", "1h", "H1") and int(st.session_state.get("y_zoom_margin_pct", 0)) == 0:
+            st.session_state["y_zoom_margin_pct"] = _default_y_zoom_margin_pct
+except Exception:
+    pass
+
 y_zoom_margin_pct = st.sidebar.slider(
     "ズーム時の縦余白(%)",
-    min_value=0, max_value=50, value=0, step=1,
+    min_value=0, max_value=50,
+    value=int(st.session_state.get("y_zoom_margin_pct", _default_y_zoom_margin_pct)),
+    step=1,
     help="ズーム適用時に上下へ追加する余白の割合（データの高値-安値に対する百分率）。"
 )
+st.session_state["y_zoom_margin_pct"] = int(y_zoom_margin_pct)
 # NOTE: デフォルト値は 2025-11-23 に 10% → 0% に変更（初期表示で余白ゼロにするため）
 # --- 🕒 現在時刻（JST, 秒付き） ---
 with st.sidebar.expander("🕒 現在時刻 (JST)", expanded=True):
@@ -2910,7 +2967,7 @@ with st.sidebar.expander("📊 直近1–2日 簡易評価", expanded=False):
                 df_raw = df_raw.loc[df_raw["timestamp"] >= t_start_wide].reset_index(drop=True)
             else:
                 # タイムスタンプがない場合は末尾N本で近似
-                n_per_day = 96  # 15分足前提
+                n_per_day = int(st.session_state.get('bars_per_day', bars_per_day(st.session_state.get('interval', '15m'))))
                 take = int((2 + int(look_days)) * n_per_day)
                 df_raw = df_raw.tail(take).reset_index(drop=True)
 
@@ -3146,7 +3203,7 @@ with st.sidebar.expander("🧪 グリッド評価（Apply Best）", expanded=Fal
             t_start_wide = t_start - pd.Timedelta(days=2)
             df_raw = df_raw.loc[df_raw["timestamp"] >= t_start_wide].reset_index(drop=True)
         else:
-            n_per_day = 96
+            n_per_day = int(st.session_state.get('bars_per_day', bars_per_day(st.session_state.get('interval', '15m'))))
             take = int((2 + int(days)) * n_per_day)
             df_raw = df_raw.tail(take).reset_index(drop=True)
         return df_raw
@@ -3371,12 +3428,23 @@ look = st.sidebar.slider("左右の窓幅", 3, 15, 5)
 st.sidebar.markdown("---")
 st.sidebar.subheader("水平サポレジ（クラスタ）")
 # 推奨初期値: USDJPY 15m を想定して eps≈0.08（約8pips）、min_samples=5
-eps = st.sidebar.number_input("DBSCAN eps（価格）", value=0.08, step=0.01)
+eps = st.sidebar.number_input(
+    "DBSCAN eps（価格）",
+    value=float(st.session_state.get("dbscan_eps", 0.08)),
+    step=0.01,
+)
+st.session_state["dbscan_eps"] = float(eps)
 min_samples = st.sidebar.slider("min_samples", 3, 12, 5)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("トレンド＆チャネル")
-reg_lookback = st.sidebar.slider("回帰に使う直近本数", 30, 300, 40)
+reg_lookback = st.sidebar.slider(
+    "回帰に使う直近本数",
+    30,
+    300,
+    int(st.session_state.get("reg_lookback", 40)),
+)
+st.session_state["reg_lookback"] = int(reg_lookback)
 chan_k = st.sidebar.slider("チャネル幅（σの倍率）", 0.5, 3.0, 2.0, 0.5)
 
 st.sidebar.markdown("---")
@@ -4957,9 +5025,13 @@ def detect_asia_box_break(
         ], axis=1).max(axis=1)
         atr14 = tr.rolling(atr_window, min_periods=max(8, atr_window//2)).mean().ffill()
         atr14_asia = float(atr14.loc[asia.index].median()) if not atr14.loc[asia.index].empty else float("nan")
-        # 直近20日メディアンATR（20日= 約96本/日×20=1920本 だが、15mなら 96*20）
+        # 直近20日メディアンATR（足種に応じて bars/day を自動スケール）
         # 手元データに応じて最大でも直近10,000本程度で代用
-        lookback_bars = min(len(df2), 96*20)
+        try:
+            bpd = int(st.session_state.get('bars_per_day', bars_per_day(st.session_state.get('interval', '15m'))))
+        except Exception:
+            bpd = 96
+        lookback_bars = min(len(df2), int(bpd) * 20)
         atr14_med20d = float(atr14.tail(lookback_bars).median()) if lookback_bars >= atr_window else float("nan")
         if np.isfinite(atr14_asia) and np.isfinite(atr14_med20d) and atr14_med20d > 0:
             vol_ratio = atr14_asia / atr14_med20d
@@ -6418,13 +6490,23 @@ if enable_ghost:
                         df_up[col] = 0.0
                 df_up = df_up[use_cols]
                 df_up["timestamp"] = ts_now
+                warn_bars_per_day_mismatch(df_up, meta)
                 # A. 入力確認
                 print("df_up input:", df_up[use_cols].to_dict(orient="records")[0])
                 # B. predict_proba shape確認
                 proba_up = model.predict_proba(df_up[use_cols])
                 print("predict_proba(df_up) shape:", proba_up.shape)
                 print("predict_proba(df_up):", proba_up)
-                pred_up = predict_with_session_theta(df_up, model, use_cols, meta)
+                try:
+                    pred_up = predict_with_session_theta(df_up, model, use_cols, meta)
+                except RuntimeError as e:
+                    # e.g. STRICT_BARS_PER_DAY=1
+                    try:
+                        import streamlit as st
+                        st.error(str(e))
+                    except Exception:
+                        pass
+                    raise
                 P_up = float(pred_up["proba"].iloc[0])
                 theta_up = float(pred_up["theta"].iloc[0])
                 sess_up = str(pred_up["session"].iloc[0])
@@ -6443,13 +6525,22 @@ if enable_ghost:
                         df_dn[col] = 0.0
                 df_dn = df_dn[use_cols]
                 df_dn["timestamp"] = ts_now
+                warn_bars_per_day_mismatch(df_dn, meta)
                 # A. 入力確認
                 print("df_dn input:", df_dn[use_cols].to_dict(orient="records")[0])
                 # B. predict_proba shape確認
                 proba_dn = model.predict_proba(df_dn[use_cols])
                 print("predict_proba(df_dn) shape:", proba_dn.shape)
                 print("predict_proba(df_dn):", proba_dn)
-                pred_dn = predict_with_session_theta(df_dn, model, use_cols, meta)
+                try:
+                    pred_dn = predict_with_session_theta(df_dn, model, use_cols, meta)
+                except RuntimeError as e:
+                    try:
+                        import streamlit as st
+                        st.error(str(e))
+                    except Exception:
+                        pass
+                    raise
                 P_dn = float(pred_dn["proba"].iloc[0])
                 theta_dn = float(pred_dn["theta"].iloc[0])
                 sess_dn = str(pred_dn["session"].iloc[0])

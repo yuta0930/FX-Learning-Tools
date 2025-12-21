@@ -42,13 +42,33 @@ def add_volatility_and_interactions(
     vol_unit2 = rv20.replace(0, np.nan)
 
     # featsのtimestamp列でaddを揃える（indexではなく列で）
+    # NOTE: Do NOT align by row index. `feats` may be filtered (dropna) and indices can drift.
     add = pd.DataFrame({"timestamp": feats["timestamp"]})
+
+    # Prepare a timestamp-indexed lookup for raw-derived series
+    df_ts = df[["timestamp"]].copy()
+    df_ts["timestamp"] = pd.to_datetime(df_ts["timestamp"], errors="coerce")
+    _vol = pd.DataFrame(
+        {
+            "timestamp": df_ts["timestamp"],
+            "vol_unit": pd.Series(vol_unit).astype(float).values,
+            "atr14": atr14.astype(float).values,
+            "atr56": atr56.astype(float).values,
+            "rv20": rv20.astype(float).values,
+        }
+    ).dropna(subset=["timestamp"])
+    _vol = _vol.drop_duplicates(subset=["timestamp"], keep="last")
+    _vol = _vol.set_index("timestamp").sort_index()
+
+    feats_ts = pd.to_datetime(add["timestamp"], errors="coerce")
+    vol_unit_aligned = _vol.reindex(feats_ts)["vol_unit"].values
+    atr14_aligned = _vol.reindex(feats_ts)["atr14"].values
+    atr56_aligned = _vol.reindex(feats_ts)["atr56"].values
+    rv20_aligned = _vol.reindex(feats_ts)["rv20"].values
     # 既存の一部特徴をボラで割る（相場レジームの影響を薄める）
     # feats側にあれば正規化版を作る
     def _maybe_norm(col, name):
         if col in feats.columns:
-            # vol_unitをfeatsのインデックスに合わせて揃える
-            vol_unit_aligned = pd.Series(vol_unit, index=df.index).reindex(feats.index).values
             add[name] = _safe_div(feats[col].values, (vol_unit_aligned + 1e-8))
     _maybe_norm("ret_1",  "ret_1_v")
     _maybe_norm("ret_4",  "ret_4_v")
@@ -58,18 +78,18 @@ def add_volatility_and_interactions(
     _maybe_norm("slope_short_6", "slope_short_6_v")
 
     # ATR/長期ATR 比、RV の追加
-    add["atr14_norm_v"] = _safe_div(
-        atr14.reindex(add.index),
-        df["close"].abs().reindex(add.index)
-    )
-    add["atr_ratio_56"] = _safe_div(
-        atr14.reindex(add.index),
-        atr56.replace(0, np.nan).reindex(add.index)
-    )
-    add["rv20"]         = rv20.fillna(0.0).reindex(add.index)
+    # NOTE: Keep alignment on timestamp. For close we use feats-side close if present.
+    if "close" in feats.columns:
+        close_aligned = feats["close"].abs().values
+    else:
+        # fallback: raw close aligned on timestamp (may be NaN if mismatch)
+        close_aligned = _vol.reindex(feats_ts)["atr14"].values * 0.0 + np.nan
+    add["atr14_norm_v"] = _safe_div(atr14_aligned, np.abs(close_aligned))
+    add["atr_ratio_56"] = _safe_div(atr14_aligned, np.where(np.abs(atr56_aligned) < 1e-12, np.nan, atr56_aligned))
+    add["rv20"] = np.nan_to_num(rv20_aligned, nan=0.0)
 
     # ATRレジーム（3分位）
-    atr_reg = _qcut_one(atr14.fillna(atr14.median())).reindex(add.index)
+    atr_reg = _qcut_one(pd.Series(atr14_aligned).fillna(np.nanmedian(atr14_aligned)))
     for lab in ("low","mid","high"):
         add[f"reg_atr_{lab}"] = (atr_reg.astype(str) == lab).astype(float)
 
