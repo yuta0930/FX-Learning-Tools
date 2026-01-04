@@ -3942,42 +3942,63 @@ def parse_news_csv(file) -> pd.DataFrame:
         raise ValueError("ニュースCSVに 'time'（または date+time）と 'importance' が必要です。")
 
     def parse_dt_series(s: pd.Series) -> pd.Series:
-        # まずUTCとしてパース
-        dt = pd.to_datetime(s, utc=True, errors="coerce", infer_datetime_format=True)
-        bad = dt.isna()
-        if bad.any():
-            fmt_list = ["%Y-%m-%d %H:%M","%Y/%m/%d %H:%M","%Y-%m-%d %H:%M:%S","%Y/%m/%d %H:%M:%S"]
-            raw = s[bad].astype(str).str.strip()
-            fixed = pd.Series([pd.NaT]*len(raw), index=raw.index)
-            for fmt in fmt_list:
+        from pandas.api.types import is_datetime64_any_dtype, is_datetime64tz_dtype
+
+        s = s if isinstance(s, pd.Series) else pd.Series(s)
+        tz_name = "Asia/Tokyo"
+
+        def numparse_to_jst(x):
+            try:
+                v = float(x)
+                if not pd.notna(v):
+                    return pd.NaT
+                unit = "ms" if v > 10_000_000_000 else "s"
+                ts = pd.to_datetime(v, unit=unit, utc=True, errors="coerce")
+                return ts.tz_convert(tz_name) if ts is not pd.NaT else pd.NaT
+            except Exception:
+                return pd.NaT
+
+        # Fast path: vectorized parse
+        dt = pd.to_datetime(s, errors="coerce")
+
+        if is_datetime64tz_dtype(dt):
+            dt_jst = dt.dt.tz_convert(tz_name)
+        elif is_datetime64_any_dtype(dt):
+            # ニュースCSVのnaive日時はJST表記として扱う
+            dt_jst = dt.dt.tz_localize(tz_name)
+        else:
+            # Fallback: mixed tz / object dtype などでも落ちないように要素ごとに解釈
+            def to_jst_one(x):
+                if x is None or (isinstance(x, float) and pd.isna(x)):
+                    return pd.NaT
+
+                # 数値/数値文字列は epoch として解釈（UTC→JST）
+                if isinstance(x, (int, float)):
+                    return numparse_to_jst(x)
+                xs = str(x).strip()
+                if xs == "" or xs.lower() in {"nan", "nat", "none"}:
+                    return pd.NaT
                 try:
-                    parsed = pd.to_datetime(raw, format=fmt, utc=True, errors="coerce")
-                    fixed = fixed.fillna(parsed)
+                    return numparse_to_jst(xs)
                 except Exception:
                     pass
-            dt.loc[bad] = fixed
-        # タイムゾーン自動判定・柔軟変換
-        if getattr(dt.dt, 'tz', None) is None:
-            # JSTで記載されている場合（例: 0時～23時のみ）
-            hours = dt.dt.hour.dropna()
-            if (hours.max() <= 23) and (hours.min() >= 0):
-                # JSTとしてローカライズ
-                dt = dt.dt.tz_localize("Asia/Tokyo")
-            else:
-                # UTCとしてローカライズ→JST変換
-                dt = dt.dt.tz_localize("UTC").dt.tz_convert("Asia/Tokyo")
-        bad = dt.isna()
+
+                ts = pd.to_datetime(xs, errors="coerce")
+                if ts is pd.NaT:
+                    return pd.NaT
+                if getattr(ts, "tzinfo", None) is None:
+                    return ts.tz_localize(tz_name)
+                return ts.tz_convert(tz_name)
+
+            dt_jst = s.apply(to_jst_one)
+
+        # Still missing? Try epoch parsing for remaining NaT
+        bad = dt_jst.isna()
         if bad.any():
             raw = s[bad].astype(str).str.strip()
-            def numparse(x):
-                try:
-                    v = float(x)
-                    if v > 10_000_000_000: return pd.to_datetime(v, unit="ms", utc=True)
-                    return pd.to_datetime(v, unit="s", utc=True)
-                except Exception:
-                    return pd.NaT
-            dt.loc[bad] = raw.apply(numparse)
-        return dt
+            dt_jst.loc[bad] = raw.apply(numparse_to_jst)
+
+        return dt_jst
 
     dt_jst = parse_dt_series(df[time_col])
     if dt_jst.notna().sum() == 0:
