@@ -27,6 +27,12 @@ def main() -> None:
     # Drift options (optional)
     ap.add_argument("--drift-source", default=None, help="Path to series file (csv/parquet) for drift check (optional)")
     ap.add_argument("--drift-column", default="close", help="Column name for drift series")
+    ap.add_argument(
+        "--drift-transform",
+        default="none",
+        choices=["none", "pct_change", "log_return", "diff"],
+        help="Transform applied before drift (none|pct_change|log_return|diff)",
+    )
     ap.add_argument("--drift-ref-n", type=int, default=2000, help="Reference window length")
     ap.add_argument("--drift-cur-n", type=int, default=500, help="Current window length")
     ap.add_argument("--drift-bins", type=int, default=20, help="Histogram bins for drift")
@@ -50,6 +56,7 @@ def main() -> None:
         Path(args.reasons_map) if args.reasons_map else None,
         drift_source=(Path(args.drift_source) if args.drift_source else None),
         drift_column=str(args.drift_column),
+        drift_transform=str(args.drift_transform),
         drift_ref_n=int(args.drift_ref_n),
         drift_cur_n=int(args.drift_cur_n),
         drift_bins=int(args.drift_bins),

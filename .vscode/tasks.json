@@ -255,6 +255,8 @@
 				"data/USDJPY_15m.csv",
 				"--drift-column",
 				"close",
+				"--drift-transform",
+				"log_return",
 				"--drift-ref-n",
 				"2000",
 				"--drift-cur-n",

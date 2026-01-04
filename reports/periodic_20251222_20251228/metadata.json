@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-01-04T18:19:56.138992",
+  "period": {
+    "start": "2025-12-22",
+    "end": "2025-12-28"
+  },
+  "rows": 0,
+  "sources": [
+    "logs\\gate_failures.jsonl"
+  ],
+  "git_commit": "d05d059",
+  "config_hashes": {
+    "config\\config.yml": "252bc90d3e2cb251a7cc011370f24c430e6d5d132d06059cade3661a476aaf5d",
+    "config\\events.yml": "02c7d8e735106ed9f339d9985cea4143d4a0d8a60d855cedc0d04cd98f968f4d",
+    "config\\reasons_map.yml": "4ac23a7ebdc5f318e0ecfc3f242fd86e8b636f6d3c557eed57f56e6795a9bef3"
+  },
+  "artifacts": {
+    "daily_csv": "reports\\periodic_20251222_20251228\\daily.csv",
+    "top_reasons_csv": "reports\\periodic_20251222_20251228\\top_reasons.csv",
+    "top_reasons_normalized_csv": "reports\\periodic_20251222_20251228\\top_reasons_normalized.csv"
+  },
+  "notes": "Empty inputs produce empty CSVs with headers; safe No-Op by design."
+}

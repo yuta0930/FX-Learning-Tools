@@ -1,5 +1,14 @@
 from __future__ import annotations
 import os
+import sys
+
+# Allow running this script directly (python scripts/run_weekly_jobs.py)
+# by ensuring the repository root is on sys.path.
+_PROJ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PROJ_ROOT not in sys.path:
+    sys.path.insert(0, _PROJ_ROOT)
+
+import os
 import yaml
 import pandas as pd
 from app.calibration.online_calibrator import OnlineCalibrator

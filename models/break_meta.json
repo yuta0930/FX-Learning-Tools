@@ -100,8 +100,8 @@
     "embargo_groups": 1
   },
   "random_state": 42,
-  "trained_at": 1766286378,
-  "trained_at_iso": "2025-12-21T03:06:18.816157+00:00",
+  "trained_at": 1767518053,
+  "trained_at_iso": "2026-01-04T09:14:13.034073+00:00",
   "label_cfg": {
     "H": 20,
     "level_lookback": 48,

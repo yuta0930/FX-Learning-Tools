@@ -81,9 +81,19 @@ def daily_allow_block(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["day", "allow", "block", "total", "block_rate"])
 
+    if "day" not in df.columns:
+        return pd.DataFrame(columns=["day", "allow", "block", "total", "block_rate"])
+
     g = df.groupby("day", dropna=True)
+    if getattr(g, "ngroups", 0) == 0:
+        return pd.DataFrame(columns=["day", "allow", "block", "total", "block_rate"])
+
     allow = g.apply(lambda x: x.get("trade_ok", pd.Series(False, index=x.index)).astype(bool).sum())
     block = g.apply(lambda x: (x.get("trade_ok", pd.Series(False, index=x.index)).astype(bool) == False).sum())  # noqa: E712
+
+    if not isinstance(allow, pd.Series) or not isinstance(block, pd.Series) or (allow.empty and block.empty):
+        return pd.DataFrame(columns=["day", "allow", "block", "total", "block_rate"])
+
     out = pd.DataFrame({"allow": allow, "block": block}).reset_index()
     out["total"] = (out["allow"] + out["block"]).astype(int)
     out["block_rate"] = out.apply(lambda r: (r["block"] / r["total"]) if r["total"] else 0.0, axis=1)

@@ -61,6 +61,7 @@ def assess_health(
     *,
     drift_source: Optional[Path] = None,
     drift_column: str = "close",
+    drift_transform: str = "none",
     drift_ref_n: int = 2000,
     drift_cur_n: int = 500,
     drift_bins: int = 20,
@@ -106,12 +107,29 @@ def assess_health(
             else:
                 sdf = pd.read_csv(drift_source)
             if drift_column in sdf.columns:
-                metrics = window_drift(pd.to_numeric(sdf[drift_column], errors="coerce"), ref_n=int(drift_ref_n), cur_n=int(drift_cur_n), bins=int(drift_bins))
-                drift = metrics
-                # しきい値判定（設定されたもののみ）
-                psi_ok = True if th.max_drift_psi is None else (float(metrics.get("psi", float("nan"))) <= th.max_drift_psi)
-                js_ok = True if th.max_drift_js is None else (float(metrics.get("js", float("nan"))) <= th.max_drift_js)
-                drift_ok = bool(psi_ok and js_ok)
+                s = pd.to_numeric(sdf[drift_column], errors="coerce")
+                tf = str(drift_transform or "none").lower()
+                if tf in ("none", "raw"):
+                    s2 = s
+                elif tf in ("pct_change", "pct", "return", "returns"):
+                    s2 = s.pct_change()
+                elif tf in ("log_return", "logret", "log_returns"):
+                    import numpy as np
+                    s2 = np.log(s).diff()
+                elif tf in ("diff", "delta"):
+                    s2 = s.diff()
+                else:
+                    drift = {"error": f"unknown drift_transform '{drift_transform}'"}
+                    drift_ok = True
+                    s2 = None
+
+                if s2 is not None:
+                    metrics = window_drift(s2, ref_n=int(drift_ref_n), cur_n=int(drift_cur_n), bins=int(drift_bins))
+                    drift = {**metrics, "transform": tf, "column": str(drift_column)}
+                    # しきい値判定（設定されたもののみ）
+                    psi_ok = True if th.max_drift_psi is None else (float(drift.get("psi", float("nan"))) <= th.max_drift_psi)
+                    js_ok = True if th.max_drift_js is None else (float(drift.get("js", float("nan"))) <= th.max_drift_js)
+                    drift_ok = bool(psi_ok and js_ok)
             else:
                 drift = {"error": f"column '{drift_column}' not found"}
         except Exception as e:
