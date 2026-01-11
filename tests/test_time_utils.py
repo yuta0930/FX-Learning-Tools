@@ -24,7 +24,7 @@ def test_to_jst_timestamp_and_series():
 
 
 def test_to_jst_datetime_index():
-    idx = pd.date_range('2025-01-01', periods=2, freq='1H', tz='UTC')
+    idx = pd.date_range('2025-01-01', periods=2, freq='1h', tz='UTC')
     out = to_jst(idx)
     assert out.tz == JST
     assert (out.hour == ((idx.hour + 9) % 24)).all()

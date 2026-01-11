@@ -600,7 +600,7 @@ def save_model(df: pd.DataFrame, use_cols: List[str], out_path: str):
 
 def save_meta(
     df: pd.DataFrame,
-    ev: EVConfig,
+    ev: EVConfig | None,
     summary: Dict,
     out_path: str,
     *,
@@ -613,18 +613,22 @@ def save_meta(
     y = df["y"].astype(int).values
     cls = {"pos": int(y.sum()), "neg": int(len(y) - y.sum())}
 
+    best = (summary.get("best_threshold") or {}) if isinstance(summary, dict) else {}
     meta = {
         "start_ts": str(df[ts_col].iloc[0]),
         "end_ts": str(df[ts_col].iloc[-1]),
         "rows": int(len(df)),
         "class_balance": cls,
-        "OOF": {"AP_macro": summary["AP_macro"], "Brier_macro": summary["Brier_macro"]},
-        "threshold": float(summary["best_threshold"]["theta"]),
-        "coverage_at_threshold": float(summary["best_threshold"]["coverage"]),
-        "ev_per_trade_at_threshold": float(summary["best_threshold"]["ev_per_trade"]),
-        "ev_per_trade": float((summary.get("oos_theta_eval") or {}).get("ev_per_trade", float("nan"))),
-        "ev_cfg": asdict(ev),
-        "features": summary["use_cols"],
+        "OOF": {
+            "AP_macro": float(summary.get("AP_macro", float("nan"))) if isinstance(summary, dict) else float("nan"),
+            "Brier_macro": float(summary.get("Brier_macro", float("nan"))) if isinstance(summary, dict) else float("nan"),
+        },
+        "threshold": float(best.get("theta", float("nan"))),
+        "coverage_at_threshold": float(best.get("coverage", float("nan"))),
+        "ev_per_trade_at_threshold": float(best.get("ev_per_trade", float("nan"))),
+        "ev_per_trade": float(((summary.get("oos_theta_eval") or {}) if isinstance(summary, dict) else {}).get("ev_per_trade", float("nan"))),
+        "ev_cfg": (asdict(ev) if ev is not None else None),
+        "features": (summary.get("use_cols") if isinstance(summary, dict) else None),
         # NOTE: Keep CV meta aligned with actual training settings for reproducibility.
         "cv": {
             "kind": "PurgedGroupTimeSeriesSplit",
@@ -725,10 +729,10 @@ def parse_args():
 # ============================================================
 # main
 # ============================================================
-def load_and_preprocess(csv_path: str) -> pd.DataFrame:
+def load_and_preprocess(csv_path: str, *, nrows: int | None = None) -> pd.DataFrame:
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSVが見つかりません: {csv_path}")
-    raw = pd.read_csv(csv_path, parse_dates=["timestamp"])
+    raw = pd.read_csv(csv_path, parse_dates=["timestamp"], nrows=nrows)
     raw = raw.rename(columns={c: c.lower() for c in raw.columns})
     need = {"timestamp", "open", "high", "low", "close", "volume"}
     if not need.issubset(raw.columns):

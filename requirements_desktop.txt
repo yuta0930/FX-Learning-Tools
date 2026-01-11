@@ -1,0 +1,3 @@
+# Desktop wrapper dependencies (Windows)
+pywebview==5.4
+pyinstaller==6.11.1

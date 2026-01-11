@@ -86,6 +86,36 @@ env\Scripts\python.exe ai_train_break.py --csv data/USDJPY_15m.csv --h 20 --buff
 - Streamlit ターミナルで `app.py` を起動（既にセットアップ済みであれば自動）
 - 設定パネル内に「バックテストサマリ (WF)」が表示されます
 
+## デスクトップアプリ化（Windows / 最小構成）
+
+このプロジェクトは Streamlit アプリのため、最小のデスクトップ化は「ローカルでStreamlitを起動して WebView ウィンドウで表示」という形になります。
+
+### 起動（開発環境のまま）
+
+1) デスクトップ用依存を追加
+
+```
+env\Scripts\python.exe -m pip install -r requirements_desktop.txt
+```
+
+2) 起動
+
+```
+scripts\run_desktop.cmd
+```
+
+### exe化（配布用）
+
+```
+scripts\build_desktop.cmd
+```
+
+出力された `dist\FXLearningToolsDesktop\FXLearningToolsDesktop.exe` を起動すると、アプリがウィンドウで開きます。
+（注）WebView2 がPCに入っていない場合、別途インストールが必要になることがあります。
+
+社内配布の実務としては、`dist\FXLearningToolsDesktop\` フォルダをそのまま zip 化して配布するのがおすすめです。
+同梱するデータ（`models/` や `data/`）も一緒に配りたい場合は、[scripts/pyinstaller_desktop.spec](scripts/pyinstaller_desktop.spec) のコメントアウト部分を有効化してください。
+
 ### pre-commit（推奨）
 
 ```

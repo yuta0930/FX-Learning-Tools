@@ -7,7 +7,7 @@ import pytest
 def test_inference_bars_per_day_warn_by_default(capsys, monkeypatch):
     from inference_break import _check_bars_per_day_consistency
 
-    ts = pd.date_range("2025-01-01", periods=200, freq="1H", tz="UTC")  # 24 bars/day
+    ts = pd.date_range("2025-01-01", periods=200, freq="1h", tz="UTC")  # 24 bars/day
     df = pd.DataFrame({"timestamp": ts})
     meta = {"bars_per_day_est": 96}  # trained on 15m
 
@@ -21,7 +21,7 @@ def test_inference_bars_per_day_warn_by_default(capsys, monkeypatch):
 def test_inference_bars_per_day_strict_raises(monkeypatch):
     from inference_break import _check_bars_per_day_consistency
 
-    ts = pd.date_range("2025-01-01", periods=200, freq="1H", tz="UTC")
+    ts = pd.date_range("2025-01-01", periods=200, freq="1h", tz="UTC")
     df = pd.DataFrame({"timestamp": ts})
     meta = {"bars_per_day_est": 96}
 

@@ -10,6 +10,11 @@ except Exception:  # 単体実行時のフォールバック（同等実装は�
     swing_pivots = None
     horizontal_levels = None
 
+try:
+    from featx import add_volatility_and_interactions as _add_vol_and_interactions
+except Exception:
+    _add_vol_and_interactions = None
+
 def _safe_div(a, b, eps=1e-9):
     return np.where(np.abs(b) < eps, 0.0, a / b)
 
@@ -132,6 +137,30 @@ def augment_features(feats: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
         out["touch_x_atr"] = out["touch_density"] * out["atr14_norm"]
     if "slope_long" in out.columns and "ny" in out.columns:
         out["slope_long_x_ny"] = out["slope_long"] * out["ny"]
+
+    # --- Align with training-side extended features (featx) ---
+    # This adds volatility-normalized features (*_v), ATR regime dummies, interactions and light polynomials.
+    if _add_vol_and_interactions is not None:
+        try:
+            out = _add_vol_and_interactions(out, raw_lc=df)
+        except Exception:
+            # best-effort; keep base features
+            pass
+
+    # --- Extra features referenced by trained models / smoke tests ---
+    # Keep alignment by timestamp to avoid index drift.
+    try:
+        extra = pd.DataFrame({"timestamp": df["timestamp"]})
+        extra["high_low_ratio_20"] = (
+            (df["high"].rolling(20).max() / df["low"].rolling(20).min())
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(1.0)
+        )
+        extra_atr = _atr(df, 14)
+        extra["atr_change_10"] = extra_atr.pct_change(10).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        out = out.merge(extra, on="timestamp", how="left")
+    except Exception:
+        pass
 
     out = out.fillna(0.0)
     return out

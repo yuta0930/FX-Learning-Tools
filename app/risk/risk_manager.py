@@ -7,7 +7,7 @@ import time
 import tempfile
 import datetime as dt
 
-from constants import ARTIFACTS_DIR
+import constants as C
 
 
 @dataclass
@@ -58,58 +58,9 @@ class RiskManager:
             # read halt_on_weekend from gate.yml lazily in allow_new_trade via components if needed; default False here
             self._halt_on_weekend = False
         # artifacts directory
-        self._art_dir = artifacts_dir_override or ARTIFACTS_DIR
+        self._art_dir = artifacts_dir_override or getattr(C, "ARTIFACTS_DIR", "artifacts")
         self._state: Optional[PersistedRiskState] = None
         self._load_state_for_today()
-
-    # ---------- public API ----------
-    def allow_new_trade(self, equity_day_start_ccy: float | None, realized_pnl_today_ccy: float | None, current_losstreak: Optional[int] = None) -> Tuple[bool, str]:
-        self.reset_if_new_day()
-        st = self._state
-        assert st is not None
-        # initialize equity_day_start if provided
-        if equity_day_start_ccy is not None and st.equity_day_start_ccy <= 0:
-            st.equity_day_start_ccy = float(equity_day_start_ccy)
-            self._save_state()
-        # update realized if caller provides a more up-to-date figure
-        if realized_pnl_today_ccy is not None:
-            st.realized_pnl_today_ccy = float(realized_pnl_today_ccy)
-            self._save_state()
-        # sync losstreak hint
-        if current_losstreak is not None:
-            st.losstreak = int(current_losstreak)
-            self._save_state()
-        # cooldown check
-        now = time.time()
-        if now < st.cooldown_until_epoch:
-            return False, "cooldown"
-        # daily loss cap check (requires equity baseline)
-        cap_pct = float(self.cfg.daily_loss_cap_pct)
-        if cap_pct > 0 and st.equity_day_start_ccy > 0:
-            pnl_pct = st.realized_pnl_today_ccy / max(st.equity_day_start_ccy, 1e-9)
-            if pnl_pct <= -cap_pct:
-                return False, "daily_loss_cap"
-        # loss-streak triggered cooldown
-        if self.cfg.cooldown_on_losstreak > 0 and st.losstreak >= int(self.cfg.cooldown_on_losstreak):
-            st.cooldown_until_epoch = now + int(self.cfg.cooldown_minutes) * 60
-            st.losstreak = 0
-            self._save_state()
-            return False, "cooldown"
-        return True, "ok"
-
-    def on_trade_close(self, pnl_ccy: Optional[float]) -> None:
-        self.reset_if_new_day()
-        st = self._state
-        assert st is not None
-        if pnl_ccy is None:
-            return
-        pnl_ccy = float(pnl_ccy)
-        st.realized_pnl_today_ccy += pnl_ccy
-        if pnl_ccy <= 0:
-            st.losstreak += 1
-        else:
-            st.losstreak = 0
-        self._save_state()
 
     def reset_if_new_day(self) -> None:
         today_key = dt.datetime.now(dt.timezone.utc).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime("%Y%m%d")
@@ -169,7 +120,6 @@ class RiskManager:
                 pass
             raise
 
-    # ---------- public API (extended) ----------
     def allow_new_trade(self, equity_day_start_ccy: float | None, realized_pnl_today_ccy: float | None, current_losstreak: Optional[int] = None) -> Tuple[bool, str]:
         """Return whether a new trade is allowed and reason code when rejected.
 
@@ -202,6 +152,16 @@ class RiskManager:
             pnl_pct = st.realized_pnl_today_ccy / max(st.equity_day_start_ccy, 1e-9)
             if pnl_pct <= -cap_pct:
                 return False, "risk_daily_cap"
+        # Optional: if caller provides losstreak and threshold hit, apply cooldown immediately
+        if (
+            current_losstreak is not None
+            and self.cfg.cooldown_on_losstreak > 0
+            and st.losstreak >= int(self.cfg.cooldown_on_losstreak)
+        ):
+            st.cooldown_until_epoch = now + int(self.cfg.cooldown_minutes) * 60
+            st.losstreak = 0
+            self._save_state()
+            return False, "losstreak_cooldown"
         return True, "ok"
 
     def on_trade_close(self, pnl_ccy: Optional[float]) -> None:

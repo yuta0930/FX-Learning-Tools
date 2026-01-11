@@ -31,4 +31,6 @@ def test_prepare_feats_cached_changes_invalidate():
     raw2.loc[10, "close"] += 1.23
     feats2 = prepare_feats_cached(raw2)
     # Expect a difference in at least one column aggregate
-    assert float(feats1["close"].mean()) != float(feats2["close"].mean())
+    # 'close' itself may not change in the returned (dropna-aligned) frame.
+    # Use a derived feature that should respond to upstream price perturbations.
+    assert float(feats1["atr14_norm"].mean()) != float(feats2["atr14_norm"].mean())

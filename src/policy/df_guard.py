@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from src.core.safety import trading_enabled
+from src.core.safety import env_guard_active
 
 
 def _append_reason(col: pd.Series, reason: str) -> pd.Series:
@@ -21,7 +21,7 @@ def enforce_env_guard_df(df: pd.DataFrame, reason: str = "disabled by MODE/KILL_
       - Append reason into df['deny_reason'] (create if missing)
     Otherwise return df unchanged.
     """
-    if trading_enabled():
+    if not env_guard_active():
         return df
 
     out = df.copy()

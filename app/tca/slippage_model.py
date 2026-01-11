@@ -29,11 +29,13 @@ class SlippageModel:
         self._p50 = None
         self._p90 = None
         self._lin = None
+        self._x_cols: Optional[List[str]] = None
 
     def fit(self, df: pd.DataFrame) -> None:
         use = self.cfg.use_features or []
         X = df[use].copy()
         X = self._encode(X)
+        self._x_cols = list(X.columns)
         y = df["slip_pips"].astype(float).to_numpy()
         if self.cfg.model == "quantile" and sm is not None:
             Xc = sm.add_constant(X)
@@ -43,7 +45,18 @@ class SlippageModel:
             self._lin = LinearRegression().fit(X, y)
 
     def predict(self, row: Dict) -> Dict[str, float]:
-        x = self._encode(pd.DataFrame([row]))
+        use = self.cfg.use_features or []
+        x_raw = pd.DataFrame([row])
+        # Keep only declared features to avoid leaking targets/labels into X
+        if use:
+            x_raw = x_raw.reindex(columns=use)
+        x = self._encode(x_raw)
+        # Align columns to training time (sklearn feature name checks)
+        if self._x_cols is not None:
+            for c in self._x_cols:
+                if c not in x.columns:
+                    x[c] = 0.0
+            x = x[self._x_cols]
         out = {"p50": 0.0, "p90": 0.0}
         if self._p50 is not None and self._p90 is not None:
             Xc = sm.add_constant(x)
@@ -60,7 +73,7 @@ class SlippageModel:
         # minimal encoding for session/category
         X = X.copy()
         if "session" in X.columns:
-            ses = X.pop("session").astype(str)
+            ses = X.pop("session").astype(str).str.lower()
             for s in ["tokyo", "london", "ny"]:
                 X[f"sess_{s}"] = (ses == s).astype(int)
         return X.fillna(0.0)

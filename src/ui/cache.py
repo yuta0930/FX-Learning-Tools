@@ -9,11 +9,13 @@ import streamlit as st
 import json
 
 
-@st.cache_data(show_spinner=False)
-def file_mtime(path: str | Path) -> Optional[float]:
+def file_mtime(path: str | Path) -> Optional[int]:
     try:
         p = Path(path)
-        return p.stat().st_mtime if p.exists() else None
+        if not p.exists():
+            return None
+        # Use ns resolution to reduce false-equality on Windows FS
+        return int(p.stat().st_mtime_ns)
     except Exception:
         return None
 

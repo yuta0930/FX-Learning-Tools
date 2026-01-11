@@ -66,7 +66,25 @@ def assess_health(
     drift_cur_n: int = 500,
     drift_bins: int = 20,
 ) -> Dict[str, Any]:
-    df = load_logs(paths)
+    existing_paths = [p for p in paths if p.exists()]
+    missing_paths = [p for p in paths if not p.exists()]
+    if not existing_paths:
+        return {
+            "ok": False,
+            "error": "no_log_files",
+            "error_detail": "None of the specified log paths exist.",
+            "lookback_days": th.lookback_days,
+            "block_rate": None,
+            "unknown_ratio": None,
+            "drift": None,
+            "thresholds": th.__dict__,
+            "inputs": [str(p) for p in paths],
+            "existing": [],
+            "missing": [str(p) for p in missing_paths],
+            "ts": datetime.now().isoformat(),
+        }
+
+    df = load_logs(existing_paths)
     since = datetime.now() - timedelta(days=th.lookback_days)
     br = _block_rate(df, since)
     ur = _unknown_ratio(df, reasons_map)
@@ -147,5 +165,7 @@ def assess_health(
         "drift": drift,
         "thresholds": th.__dict__,
         "inputs": [str(p) for p in paths],
+        "existing": [str(p) for p in existing_paths],
+        "missing": [str(p) for p in missing_paths],
         "ts": datetime.now().isoformat(),
     }

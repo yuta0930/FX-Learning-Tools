@@ -17,12 +17,6 @@ def _rv_sigma(df: pd.DataFrame, win: int = 20) -> pd.Series:
     ret1 = df["close"].pct_change(1)
     return ret1.rolling(win, min_periods=win).std(ddof=0)
 
-def _qcut_one(s: pd.Series, q=(0.33, 0.66), labels=("low","mid","high")):
-    try:
-        return pd.qcut(s, q=[0.0, q[0], q[1], 1.0], labels=labels, duplicates="drop")
-    except Exception:
-        return pd.Series(index=s.index, dtype="category")
-
 def add_volatility_and_interactions(
     feats: pd.DataFrame,
     raw_lc: pd.DataFrame,  # lower-case: timestamp, open, high, low, close, volume
@@ -61,10 +55,11 @@ def add_volatility_and_interactions(
     _vol = _vol.set_index("timestamp").sort_index()
 
     feats_ts = pd.to_datetime(add["timestamp"], errors="coerce")
-    vol_unit_aligned = _vol.reindex(feats_ts)["vol_unit"].values
-    atr14_aligned = _vol.reindex(feats_ts)["atr14"].values
-    atr56_aligned = _vol.reindex(feats_ts)["atr56"].values
-    rv20_aligned = _vol.reindex(feats_ts)["rv20"].values
+    _aligned = _vol.reindex(feats_ts)
+    vol_unit_aligned = _aligned["vol_unit"].to_numpy()
+    atr14_aligned = _aligned["atr14"].to_numpy()
+    atr56_aligned = _aligned["atr56"].to_numpy()
+    rv20_aligned = _aligned["rv20"].to_numpy()
     # 既存の一部特徴をボラで割る（相場レジームの影響を薄める）
     # feats側にあれば正規化版を作る
     def _maybe_norm(col, name):
@@ -88,10 +83,22 @@ def add_volatility_and_interactions(
     add["atr_ratio_56"] = _safe_div(atr14_aligned, np.where(np.abs(atr56_aligned) < 1e-12, np.nan, atr56_aligned))
     add["rv20"] = np.nan_to_num(rv20_aligned, nan=0.0)
 
-    # ATRレジーム（3分位）
-    atr_reg = _qcut_one(pd.Series(atr14_aligned).fillna(np.nanmedian(atr14_aligned)))
-    for lab in ("low","mid","high"):
-        add[f"reg_atr_{lab}"] = (atr_reg.astype(str) == lab).astype(float)
+    # ATRレジーム（3分位）: pd.qcut は遅いので、nanquantileベースで高速化
+    atr_vals = np.asarray(atr14_aligned, dtype=float)
+    atr_vals = np.where(np.isfinite(atr_vals), atr_vals, np.nan)
+    finite_n = int(np.isfinite(atr_vals).sum())
+    if finite_n == 0:
+        add["reg_atr_low"] = 0.0
+        add["reg_atr_mid"] = 0.0
+        add["reg_atr_high"] = 0.0
+    else:
+        q1, q2 = np.nanquantile(atr_vals, [0.33, 0.66])
+        low = atr_vals <= q1
+        mid = (atr_vals > q1) & (atr_vals <= q2)
+        high = atr_vals > q2
+        add["reg_atr_low"] = np.nan_to_num(low.astype(float), nan=0.0)
+        add["reg_atr_mid"] = np.nan_to_num(mid.astype(float), nan=0.0)
+        add["reg_atr_high"] = np.nan_to_num(high.astype(float), nan=0.0)
 
     # === 交互作用（軽量・解釈しやすいものだけ） ===
     out = feats.merge(add, on="timestamp", how="left")

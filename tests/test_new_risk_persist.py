@@ -18,7 +18,7 @@ def test_persisted_risk_daily_cap_and_cooldown(tmp_path, monkeypatch):
     rm.on_trade_close(-1000.0)
     rm.on_trade_close(-2000.0)
     ok2, reason2 = rm.allow_new_trade(equity_day_start_ccy=None, realized_pnl_today_ccy=None, current_losstreak=None)
-    assert (not ok2) and reason2 in {"cooldown", "daily_loss_cap"}
+    assert (not ok2) and reason2 in {"losstreak_cooldown", "risk_daily_cap"}
     # also ensure state file exists
     files = os.listdir(os.path.join(str(new_art), "risk"))
     assert any(f.startswith("state_") and f.endswith(".json") for f in files)

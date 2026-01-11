@@ -82,6 +82,23 @@ def detect_flag_pennant_simplified(
     idx = np.arange(n)
     out: List[FlagPennantSignal] = []
 
+    # Precompute rolling window ranges (high-low) for each candidate L.
+    # The previous implementation built per-candidate historical distributions with nested loops,
+    # which is too slow for tests and small evaluations.
+    hs = pd.Series(highs)
+    ls = pd.Series(lows)
+    range_by_L: dict[int, np.ndarray] = {}
+    q_by_L: dict[int, float] = {}
+    for L in range(min_flag_bars, max_flag_bars + 1):
+        roll_hi = hs.rolling(L, min_periods=L).max().to_numpy()
+        roll_lo = ls.rolling(L, min_periods=L).min().to_numpy()
+        rng = (roll_hi - roll_lo).astype(float)
+        range_by_L[L] = rng
+        try:
+            q_by_L[L] = float(np.nanquantile(rng, max(0.0, min(1.0, contraction_percentile))))
+        except Exception:
+            q_by_L[L] = float("nan")
+
     # Scan for poles then consolidation + breakout
     for i in range(start + n_push + min_flag_bars, n):
         # Pole ending at pivot 'a' just before consolidation starts
@@ -120,17 +137,11 @@ def detect_flag_pennant_simplified(
             slope_ok = slope_abs_atr <= max(0.0, float(flag_slope_max_atr))
 
             # Window range vs historical distribution percentile as contraction
-            win_range = float(np.nanmax(highs[a:b]) - np.nanmin(lows[a:b])) if (b - a) > 1 else 0.0
-            # Build simple rolling window ranges for reference
-            rng_hist = []
-            hist_len = min(lookback, a)
-            if hist_len >= L:
-                start_hist = a - hist_len
-                for u in range(start_hist, a - L + 1):
-                    hh = float(np.nanmax(highs[u:u+L]))
-                    ll = float(np.nanmin(lows[u:u+L]))
-                    rng_hist.append(max(0.0, hh - ll))
-            q = float(np.nanquantile(np.asarray(rng_hist), max(0.0, min(1.0, contraction_percentile)))) if rng_hist else win_range
+            end_idx = b - 1
+            win_range = float(range_by_L.get(L, np.asarray([np.nan]))[end_idx]) if end_idx >= 0 else 0.0
+            q = float(q_by_L.get(L, float("nan")))
+            if not np.isfinite(q) or q <= 1e-12:
+                q = win_range
             contraction_ok = win_range <= max(q, 1e-12)
 
             # Residual sigma guard (remain as a soft check)

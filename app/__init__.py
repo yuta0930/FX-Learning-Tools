@@ -10,6 +10,8 @@ to utils.app_core to preserve the old import path.
 from typing import Any, Tuple
 import numpy as _np
 
+from utils.timeframe_profile import _maybe_autoswitch_timeframe_profile  # noqa: F401
+
 try:
 	# Preferred: use the stable UI-free core implementation
 	from utils.app_core import _load_and_validate_baseline as _core__load_and_validate_baseline  # type: ignore

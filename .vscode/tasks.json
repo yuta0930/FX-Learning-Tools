@@ -369,6 +369,13 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "Build desktop (PyInstaller)",
+			"type": "shell",
+			"command": "C:\\Users\\daiki\\OneDrive\\fx2\\FX-Learning-Tools\\scripts\\build_desktop.cmd",
+			"isBackground": false,
+			"group": "build"
 		}
 	],
 	"inputs": [

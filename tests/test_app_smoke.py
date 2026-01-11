@@ -186,11 +186,22 @@ def _install_fake_streamlit_modules():
 
 
 def test_app_import_smoke():
-    _install_fake_streamlit_modules()
-    # 既に読み込まれていたら消して再インポート
-    if 'app' in sys.modules:
-        del sys.modules['app']
+    # This test monkeypatches sys.modules to provide a lightweight fake Streamlit.
+    # Ensure we restore sys.modules afterwards to avoid cross-test pollution.
+    keys = ['streamlit', 'streamlit.components', 'streamlit.components.v1']
+    orig = {k: sys.modules.get(k) for k in keys}
     try:
-        importlib.import_module('app')
-    except Exception as e:
-        raise AssertionError(f"app import failed: {e}")
+        _install_fake_streamlit_modules()
+        # 既に読み込まれていたら消して再インポート
+        if 'app' in sys.modules:
+            del sys.modules['app']
+        try:
+            importlib.import_module('app')
+        except Exception as e:
+            raise AssertionError(f"app import failed: {e}")
+    finally:
+        for k, v in orig.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v

@@ -5,8 +5,8 @@
   "interval": "15m",
   "period": "60d",
   "start_ts": "2025-06-09 09:15:00",
-  "end_ts": "2025-12-19 22:00:00",
-  "train_rows": 13154,
+  "end_ts": "2026-01-05 06:15:00",
+  "train_rows": 13990,
   "class_balance": {
     "pos": null,
     "neg": null
@@ -18,12 +18,12 @@
   },
   "OOF": {
     "AUC": null,
-    "AP": 0.4733356091566355,
-    "Brier": 0.2151461964735227
+    "AP": 0.4640680836811803,
+    "Brier": 0.21475778517520086
   },
-  "threshold": 0.7078787878787879,
-  "coverage_at_threshold": 0.014826642335766423,
-  "ev_per_trade_at_threshold": 0.4482117247644037,
+  "threshold": 0.7375757575757576,
+  "coverage_at_threshold": 0.012698412698412698,
+  "ev_per_trade_at_threshold": 0.5177870639868798,
   "ev_cfg": {
     "rr": 1.0,
     "cost_ratio": 0.02
@@ -68,8 +68,8 @@
   },
   "random_state": 42,
   "code_hash": "842de0f5683db23c8bcf0862107df123e10495f6734348c59b72813c73ce342c",
-  "trained_at": 1767518063,
-  "trained_at_iso": "2026-01-04T09:14:23.763055+00:00",
+  "trained_at": 1768136267,
+  "trained_at_iso": "2026-01-11T12:57:47.166338+00:00",
   "ev": null,
   "up_summary": null,
   "down_summary": null

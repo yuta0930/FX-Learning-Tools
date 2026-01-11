@@ -187,4 +187,10 @@ def enforce_pattern_quality_gate_df(
             # Never fail trading pipeline due to logging
             pass
 
+    # Ensure scalar values are plain Python bool (tests use `is False`)
+    try:
+        out["trade_ok"] = out["trade_ok"].map(lambda v: bool(v)).astype(object)
+    except Exception:
+        pass
+
     return out

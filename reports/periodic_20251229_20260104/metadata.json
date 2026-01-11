@@ -1,14 +1,15 @@
 {
-  "generated_at": "2026-01-04T18:19:48.991179",
+  "generated_at": "2026-01-11T22:00:02.902268",
   "period": {
     "start": "2025-12-29",
     "end": "2026-01-04"
   },
   "rows": 0,
   "sources": [
-    "logs\\gate_failures.jsonl"
+    "logs\\executions.parquet",
+    "logs\\trades.parquet"
   ],
-  "git_commit": "d05d059",
+  "git_commit": "743f08d",
   "config_hashes": {
     "config\\config.yml": "252bc90d3e2cb251a7cc011370f24c430e6d5d132d06059cade3661a476aaf5d",
     "config\\events.yml": "02c7d8e735106ed9f339d9985cea4143d4a0d8a60d855cedc0d04cd98f968f4d",

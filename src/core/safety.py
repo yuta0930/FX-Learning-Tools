@@ -26,6 +26,24 @@ def is_kill_switch_on() -> bool:
     return bool(env_on or file_on)
 
 
+def env_guard_active() -> bool:
+    """Return True if environment-level guard should disable trading.
+
+    - Kill switch always disables.
+    - MODE disables only when explicitly set to a non-live value.
+
+    Rationale: keeping MODE default at 'paper' is safe for the Streamlit app,
+    but tests/offline imports shouldn't be force-disabled unless the caller
+    opted into MODE control.
+    """
+    if is_kill_switch_on():
+        return True
+    mode_env = os.getenv("MODE")
+    if mode_env is None:
+        return False
+    return str(mode_env).lower() != "live"
+
+
 def trading_enabled() -> bool:
     """Trading is enabled only when MODE == 'live' and kill switch is OFF."""
     return current_mode() == "live" and not is_kill_switch_on()

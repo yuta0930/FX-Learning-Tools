@@ -42,7 +42,8 @@ def test_no_obvious_future_leakage_vs_y():
 
     from ai_train_break import load_and_preprocess, get_label_config, make_dataset
 
-    raw = load_and_preprocess("data/USDJPY_15m.csv")
+    # Keep runtime bounded: leakage detection is a sanity check, so a sample is sufficient.
+    raw = load_and_preprocess("data/USDJPY_15m.csv", nrows=2500)
     # minimal args emulation
     class _A:
         horizon_bars = 20

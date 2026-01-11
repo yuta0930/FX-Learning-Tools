@@ -285,6 +285,21 @@ def run(
         for s in signals
     ]
     sig_df = pd.DataFrame(sig_rows)
+    if sig_df.empty:
+        # Ensure downstream merges/filters are safe even when no signals are detected
+        sig_df = pd.DataFrame(
+            columns=[
+                "time",
+                "index",
+                "side",
+                "entry",
+                "delta",
+                "quality",
+                "kind",
+                "slope_abs_atr",
+                "contraction_pct",
+            ]
+        )
 
     # Join market info
     # Build a joinable market-info frame without colliding with existing time/timestamp columns
@@ -359,6 +374,8 @@ def run(
             sig_df = sig_df[(sig_df["atr"].fillna(np.nan) >= lo) & (sig_df["atr"].fillna(np.nan) <= hi)].copy()
 
     # Baseline evaluation (before HTF filter)
+    if "index" not in sig_df.columns:
+        sig_df["index"] = pd.Series([], dtype="int64")
     filt_idx_base = set(int(i) for i in sig_df["index"].tolist())
     signals_base = [s for s in signals if int(s.index) in filt_idx_base]
     sig_eval_df_base, sig_metrics_base = _eval_signals(df, signals_base, H, delta_mult, spread_pips, pip_size)
@@ -393,6 +410,8 @@ def run(
         sig_df_final = sig_df_final[sig_df_final.apply(_htf_ok, axis=1)].copy()
 
     # Evaluate final set (after HTF if enabled)
+    if "index" not in sig_df_final.columns:
+        sig_df_final["index"] = pd.Series([], dtype="int64")
     filt_idx = set(int(i) for i in sig_df_final["index"].tolist())
     signals_f = [s for s in signals if int(s.index) in filt_idx]
     sig_eval_df, sig_metrics = _eval_signals(df, signals_f, H, delta_mult, spread_pips, pip_size)
@@ -525,39 +544,41 @@ def run(
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
 
-    # Optional: save a few sample PNGs around signal points if matplotlib exists
-    try:
-        import matplotlib.pyplot as plt  # type: ignore
+    # Optional: save a few sample PNGs around signal points if matplotlib exists.
+    # Matplotlib import can be very slow on Windows; skip during pytest to keep the suite snappy.
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
 
-        if len(sig_df) > 0:
-            samp_dir = out_path / "samples"
-            samp_dir.mkdir(exist_ok=True)
-            take = min(3, len(sig_df))
-            for j in range(take):
-                row = sig_df.iloc[j]
-                i = int(row["index"]) if "index" in row else int(np.where(df.index == row["time"])[0][0])
-                w = 120
-                a = max(0, i - w)
-                b = min(len(df) - 1, i + w)
-                xs = df.index[a:b]
-                ys = df["close"].iloc[a:b]
-                plt.figure(figsize=(10, 4))
-                plt.plot(xs, ys, label="close", color="#1f77b4")
-                plt.axvline(df.index[i], color="#444", linestyle="--", alpha=0.6)
-                plt.title(f"Flag/Pennant sample (idx={i}, side={int(row['side'])}, H={H})")
-                # Plot delta bands at entry
-                entry = float(row["entry"]) if "entry" in row else float(df["close"].iloc[i])
-                delta = float(row["delta"]) if "delta" in row else float(delta_mult * df["atr"].iloc[i])
-                plt.axhline(entry + delta, color="#2ca02c", linestyle=":", alpha=0.7)
-                plt.axhline(entry - delta, color="#d62728", linestyle=":", alpha=0.7)
-                plt.legend(loc="best")
-                plt.tight_layout()
-                out_png = samp_dir / f"sample_{j+1}.png"
-                plt.savefig(out_png)
-                plt.close()
-    except Exception:
-        # plotting is best-effort; ignore failures
-        pass
+            if len(sig_df) > 0:
+                samp_dir = out_path / "samples"
+                samp_dir.mkdir(exist_ok=True)
+                take = min(3, len(sig_df))
+                for j in range(take):
+                    row = sig_df.iloc[j]
+                    i = int(row["index"]) if "index" in row else int(np.where(df.index == row["time"])[0][0])
+                    w = 120
+                    a = max(0, i - w)
+                    b = min(len(df) - 1, i + w)
+                    xs = df.index[a:b]
+                    ys = df["close"].iloc[a:b]
+                    plt.figure(figsize=(10, 4))
+                    plt.plot(xs, ys, label="close", color="#1f77b4")
+                    plt.axvline(df.index[i], color="#444", linestyle="--", alpha=0.6)
+                    plt.title(f"Flag/Pennant sample (idx={i}, side={int(row['side'])}, H={H})")
+                    # Plot delta bands at entry
+                    entry = float(row["entry"]) if "entry" in row else float(df["close"].iloc[i])
+                    delta = float(row["delta"]) if "delta" in row else float(delta_mult * df["atr"].iloc[i])
+                    plt.axhline(entry + delta, color="#2ca02c", linestyle=":", alpha=0.7)
+                    plt.axhline(entry - delta, color="#d62728", linestyle=":", alpha=0.7)
+                    plt.legend(loc="best")
+                    plt.tight_layout()
+                    out_png = samp_dir / f"sample_{j+1}.png"
+                    plt.savefig(out_png)
+                    plt.close()
+        except Exception:
+            # plotting is best-effort; ignore failures
+            pass
 
     return metrics_path, metrics
 
