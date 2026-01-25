@@ -1,19 +1,19 @@
 {
   "start_ts": "2025-06-09 21:15:00",
-  "end_ts": "2025-12-19 22:00:00",
-  "rows": 13106,
+  "end_ts": "2026-01-05 06:15:00",
+  "rows": 13942,
   "class_balance": {
-    "pos": 4016,
-    "neg": 9090
+    "pos": 4279,
+    "neg": 9663
   },
   "OOF": {
-    "AP_macro": 0.42894463975492736,
-    "Brier_macro": 0.20485805123079529
+    "AP_macro": 0.4341664265484971,
+    "Brier_macro": 0.2040986943922809
   },
-  "threshold": 0.6749999999999999,
-  "coverage_at_threshold": 0.00015260186174271325,
-  "ev_per_trade_at_threshold": 0.21248643601584763,
-  "ev_per_trade": 0.21248643601584763,
+  "threshold": 0.7699999999999999,
+  "coverage_at_threshold": 0.00043035432506096684,
+  "ev_per_trade_at_threshold": 0.3966666666666669,
+  "ev_per_trade": 0.3966666666666669,
   "ev_cfg": {
     "R_win": 1.0,
     "R_loss": 1.0,
@@ -58,18 +58,18 @@
     "cos_hour",
     "touch_x_atr",
     "slope_long_x_ny",
-    "ret_1_v",
-    "ret_4_v",
-    "ret_8_v",
-    "ret_12_v",
-    "range_pct_v",
-    "slope_short_6_v",
-    "atr14_norm_v",
-    "atr_ratio_56",
-    "rv20",
-    "reg_atr_low",
-    "reg_atr_mid",
-    "reg_atr_high",
+    "ret_1_v_x",
+    "ret_4_v_x",
+    "ret_8_v_x",
+    "ret_12_v_x",
+    "range_pct_v_x",
+    "slope_short_6_v_x",
+    "atr14_norm_v_x",
+    "atr_ratio_56_x",
+    "rv20_x",
+    "reg_atr_low_x",
+    "reg_atr_mid_x",
+    "reg_atr_high_x",
     "tokyo_x_range",
     "tokyo_x_touch",
     "london_x_range",
@@ -90,7 +90,19 @@
     "ret_8_v_sq",
     "ret_12_v_sq",
     "high_low_ratio_20",
-    "atr_change_10"
+    "atr_change_10",
+    "ret_1_v_y",
+    "ret_4_v_y",
+    "ret_8_v_y",
+    "ret_12_v_y",
+    "range_pct_v_y",
+    "slope_short_6_v_y",
+    "atr14_norm_v_y",
+    "atr_ratio_56_y",
+    "rv20_y",
+    "reg_atr_low_y",
+    "reg_atr_mid_y",
+    "reg_atr_high_y"
   ],
   "cv": {
     "kind": "PurgedGroupTimeSeriesSplit",
@@ -100,8 +112,8 @@
     "embargo_groups": 1
   },
   "random_state": 42,
-  "trained_at": 1767518053,
-  "trained_at_iso": "2026-01-04T09:14:13.034073+00:00",
+  "trained_at": 1769345563,
+  "trained_at_iso": "2026-01-25T12:52:43.574010+00:00",
   "label_cfg": {
     "H": 20,
     "level_lookback": 48,
@@ -120,55 +132,55 @@
   "bars_per_day_est": 96,
   "ev_cost_sensitivity": {
     "0.05": {
-      "theta": 0.6819886363636364,
-      "trades": 1,
-      "ev_per_trade": 0.314612511671335,
-      "coverage": 7.630093087135663e-05,
-      "avg_p": 0.6823062558356675
+      "theta": 0.7679545454545454,
+      "trades": 6,
+      "ev_per_trade": 0.49666666666666687,
+      "coverage": 0.00043035432506096684,
+      "avg_p": 0.7733333333333334
     },
     "0.10": {
-      "theta": 0.6818072289156627,
-      "trades": 1,
-      "ev_per_trade": 0.26461251167133504,
-      "coverage": 7.630093087135663e-05,
-      "avg_p": 0.6823062558356675
+      "theta": 0.7678313253012048,
+      "trades": 6,
+      "ev_per_trade": 0.4466666666666668,
+      "coverage": 0.00043035432506096684,
+      "avg_p": 0.7733333333333334
     },
     "0.15": {
-      "theta": 0.6749999999999999,
-      "trades": 2,
-      "ev_per_trade": 0.21248643601584763,
-      "coverage": 0.00015260186174271325,
-      "avg_p": 0.6812432180079238
+      "theta": 0.7699999999999999,
+      "trades": 6,
+      "ev_per_trade": 0.3966666666666669,
+      "coverage": 0.00043035432506096684,
+      "avg_p": 0.7733333333333334
     },
     "0.20": {
-      "theta": 0.6749999999999999,
-      "trades": 2,
-      "ev_per_trade": 0.1624864360158476,
-      "coverage": 0.00015260186174271325,
-      "avg_p": 0.6812432180079238
+      "theta": 0.77,
+      "trades": 6,
+      "ev_per_trade": 0.34666666666666685,
+      "coverage": 0.00043035432506096684,
+      "avg_p": 0.7733333333333334
     }
   },
   "theta_by_session": {
     "Tokyo": {
-      "theta": 0.6499999999999999,
-      "trades": 1,
-      "ev_per_trade": 0.21036036036036024,
-      "coverage": 0.0003003003003003003,
-      "avg_p": 0.6801801801801801
+      "theta": 0.6599999999999999,
+      "trades": 2,
+      "ev_per_trade": 0.19620155570267753,
+      "coverage": 0.0005676979846721544,
+      "avg_p": 0.6731007778513387
     },
     "London": {
-      "theta": 0.6749999999999999,
-      "trades": 1,
-      "ev_per_trade": 0.21461251167133502,
-      "coverage": 0.0002363507445048452,
-      "avg_p": 0.6823062558356675
+      "theta": 0.7699999999999999,
+      "trades": 4,
+      "ev_per_trade": 0.39666666666666683,
+      "coverage": 0.0008898776418242492,
+      "avg_p": 0.7733333333333334
     },
     "NY": {
-      "theta": 0.6749999999999999,
-      "trades": 1,
-      "ev_per_trade": 0.21461251167133502,
-      "coverage": 0.000267022696929239,
-      "avg_p": 0.6823062558356675
+      "theta": 0.71,
+      "trades": 4,
+      "ev_per_trade": 0.39666666666666683,
+      "coverage": 0.0009995002498750624,
+      "avg_p": 0.7733333333333334
     }
   },
   "theta_by_session_regime": {

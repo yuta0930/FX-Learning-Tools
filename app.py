@@ -5437,7 +5437,6 @@ hs_tol = st.sidebar.slider("肩の高さ許容（比率）", 0.001, 0.02, 0.003,
 # 表示補助（パターン）
 st.sidebar.markdown("---")
 st.sidebar.subheader("表示補助（パターン）")
-pattern_highlight_latest = st.sidebar.checkbox("最新検出の強調表示（vrect）", value=True)
 show_recent_asia = st.sidebar.checkbox("直近アジア高値/安値 (完了セッション) を表示", value=True,
     help="当日セッションが未終了なら前営業日のアジア時間。終了後は当日分。データ不足なら最大7日前まで探索します。")
 
@@ -5789,6 +5788,155 @@ def make_features_for_level(df, ts, level, dir_sign, touch_buffer, trend_look=15
 
 # ====================== チャート描画 ======================
 # （表示オプションは上部へ移動済み）
+
+def add_4h_blocks_to_fig(
+    fig: "go.Figure",
+    idx: "pd.DatetimeIndex",
+    *,
+    enabled: bool,
+    highlight_current_block: bool,
+    anchor_tz: str = "America/New_York",
+    anchor_hour: int = 17,
+    max_blocks: int = 500,
+    stripe_opacity: float = 0.05,
+    highlight_opacity: float = 0.12,
+    line_opacity: float = 0.25,
+) -> "go.Figure":
+    """15分足チャート向けに4時間ブロックを重ねる。
+
+    - 4時間ごとに背景を薄く交互に色分け（縦帯）
+    - 4時間の境界に縦線
+    - 最新足が属する4時間ブロックをやや濃く強調（任意）
+    """
+    try:
+        if not enabled:
+            return fig
+        if idx is None or (not isinstance(idx, pd.DatetimeIndex)) or len(idx) < 2:
+            return fig
+
+        t0 = idx[0]
+        t1 = idx[-1]
+        if pd.isna(t0) or pd.isna(t1):
+            return fig
+        if t1 <= t0:
+            return fig
+
+        # NYクローズ（NY時間 17:00）起点で4時間ブロックを切る。
+        # 例: 17:00→21:00→01:00→05:00→09:00→13:00→17:00...
+        # ※チャートの表示TZに関わらず、境界生成はNYタイムゾーンで行い、描画時に idx.tz へ戻す。
+        if idx.tz is None:
+            # tz-naiveだとNYへ変換できないため、安全に従来の0時起点へフォールバック
+            start = pd.Timestamp(t0).floor("4H")
+            end = pd.Timestamp(t1).ceil("4H")
+            if start >= end:
+                return fig
+            boundaries = pd.date_range(start=start, end=end, freq="4H")
+        else:
+            try:
+                from zoneinfo import ZoneInfo  # py3.9+
+
+                ny_tz = ZoneInfo(anchor_tz)
+                t0_ny = pd.Timestamp(t0).tz_convert(ny_tz)
+                t1_ny = pd.Timestamp(t1).tz_convert(ny_tz)
+            except Exception:
+                # zoneinfoが使えない等: 従来方式へ
+                start = pd.Timestamp(t0).floor("4H")
+                end = pd.Timestamp(t1).ceil("4H")
+                if start >= end:
+                    return fig
+                boundaries = pd.date_range(start=start, end=end, freq="4H", tz=idx.tz)
+            else:
+                def _anchored_floor_4h(ts_ny: pd.Timestamp) -> pd.Timestamp:
+                    base = ts_ny.normalize() + pd.Timedelta(hours=int(anchor_hour))
+                    if ts_ny < base:
+                        base = base - pd.Timedelta(days=1)
+                    delta = ts_ny - base
+                    k = int(delta.total_seconds() // (4 * 3600))
+                    return base + pd.Timedelta(hours=4 * k)
+
+                start_ny = _anchored_floor_4h(t0_ny)
+                # end側は「最後の境界がt1を超える」まで生成
+                total_hours = (t1_ny - start_ny).total_seconds() / 3600.0
+                steps = int(math.ceil(max(0.0, total_hours) / 4.0)) + 1
+                boundaries_ny = [start_ny + pd.Timedelta(hours=4 * i) for i in range(steps + 1)]
+                # 描画用にチャートTZへ戻す
+                boundaries = pd.DatetimeIndex([b.tz_convert(idx.tz) for b in boundaries_ny])
+
+        if len(boundaries) < 2:
+            return fig
+
+        n_blocks = int(len(boundaries) - 1)
+        if n_blocks > int(max_blocks):
+            # 形状が多すぎると重くなるため安全にスキップ
+            return fig
+
+        # 最新足が属するブロック
+        cur_t = pd.Timestamp(t1)
+        if idx.tz is None:
+            cur_start = cur_t.floor("4H")
+            cur_end = cur_start + pd.Timedelta(hours=4)
+        else:
+            try:
+                from zoneinfo import ZoneInfo
+
+                ny_tz = ZoneInfo(anchor_tz)
+                cur_ny = cur_t.tz_convert(ny_tz)
+                base = cur_ny.normalize() + pd.Timedelta(hours=int(anchor_hour))
+                if cur_ny < base:
+                    base = base - pd.Timedelta(days=1)
+                delta = cur_ny - base
+                k = int(delta.total_seconds() // (4 * 3600))
+                cur_start = (base + pd.Timedelta(hours=4 * k)).tz_convert(idx.tz)
+                cur_end = (base + pd.Timedelta(hours=4 * (k + 1))).tz_convert(idx.tz)
+            except Exception:
+                cur_start = cur_t.floor("4H")
+                cur_end = cur_start + pd.Timedelta(hours=4)
+
+        for i in range(n_blocks):
+            x0 = boundaries[i]
+            x1 = boundaries[i + 1]
+
+            # 交互シェード（偶数ブロックのみ薄く）
+            if i % 2 == 0:
+                try:
+                    fig.add_vrect(
+                        x0=x0,
+                        x1=x1,
+                        fillcolor=f"rgba(255,255,255,{float(stripe_opacity):.4f})",
+                        line_width=0,
+                        layer="below",
+                    )
+                except Exception:
+                    pass
+
+            # 境界線（x0側。最初の1本は重複するので省略）
+            if i > 0:
+                try:
+                    fig.add_vline(
+                        x=x0,
+                        line_width=1,
+                        line_color=f"rgba(255,255,255,{float(line_opacity):.4f})",
+                        layer="above",
+                    )
+                except Exception:
+                    pass
+
+        if highlight_current_block:
+            try:
+                fig.add_vrect(
+                    x0=cur_start,
+                    x1=cur_end,
+                    fillcolor=f"rgba(255,255,255,{float(highlight_opacity):.4f})",
+                    line_width=0,
+                    layer="below",
+                )
+            except Exception:
+                pass
+
+        return fig
+    except Exception:
+        return fig
+
 fig = go.Figure()
 fig.add_trace(go.Candlestick(
     x=df.index,
@@ -5797,6 +5945,28 @@ fig.add_trace(go.Candlestick(
     increasing_line_color=COLOR_CANDLE_UP_EDGE, increasing_fillcolor=COLOR_CANDLE_UP_BODY,
     decreasing_line_color=COLOR_CANDLE_DN_EDGE, decreasing_fillcolor=COLOR_CANDLE_DN_BODY
 ))
+
+# --- 15分足: 4時間ブロック（縦帯＋境界線＋現在ブロック強調） ---
+try:
+    _is_15m = str(interval).lower() in {"15m", "15min", "15mins", "15"}
+    _enabled_4h = bool(_is_15m)
+    # ズームが有効なら、その範囲だけに限定（形状の数を抑える）
+    _idx_for_4h = df.index
+    if _enabled_4h and ("zoom_recent_175" in locals()) and bool(zoom_recent_175):
+        try:
+            n = len(df)
+            start_idx = max(0, n - int(zoom_recent_n))
+            _idx_for_4h = df.index[start_idx:]
+        except Exception:
+            _idx_for_4h = df.index
+    fig = add_4h_blocks_to_fig(
+        fig,
+        _idx_for_4h,
+        enabled=_enabled_4h,
+        highlight_current_block=True,
+    )
+except Exception:
+    pass
 
 # --- オーバーレイ: 今日のアジア高値/安値（視覚化） ---
 try:
@@ -6198,42 +6368,6 @@ for p in patterns_sorted:
         _draw_asia_box(fig, p)
     elif kind in ("head_shoulders","inverse_head_shoulders"):
         _draw_hs(fig, p)
-
-# --- 最新パターンの区間をハイライト（vrect） ---
-def _latest_pattern_window(pats: list) -> tuple[pd.Timestamp|None, pd.Timestamp|None, str|None]:
-    if not pats:
-        return None, None, None
-    # t_end が最大のものを採用（最も新しい検出）
-    def _t_end(x):
-        return x.get('t_end') if isinstance(x, dict) else getattr(x, 't_end', None)
-    def _t_start(x):
-        return x.get('t_start') if isinstance(x, dict) else getattr(x, 't_start', None)
-    cand = [x for x in pats if _t_end(x) is not None]
-    if not cand:
-        return None, None, None
-    latest = max(cand, key=lambda x: _t_end(x))
-    t0 = _t_start(latest); t1 = _t_end(latest)
-    kind = latest.get('kind') if isinstance(latest, dict) else getattr(latest, 'kind', None)
-    return t0, t1, kind
-
-try:
-    if pattern_highlight_latest and patterns:
-        t0, t1, kind = _latest_pattern_window(patterns)
-        if t0 is not None and t1 is not None:
-            # 種別の日本語ラベルで注釈
-            try:
-                kind_label = _pattern_kind_label(kind) if 'kind' in locals() or 'kind' in globals() else str(kind)
-            except Exception:
-                kind_label = str(kind)
-            fig.add_vrect(x0=t0, x1=t1, line_width=0, fillcolor="rgba(255, 235, 59, 0.15)",
-                          annotation_text=f"最新: {kind_label}", annotation_position="top left")
-            try:
-                log_event('pattern_vrect', kind=str(kind), t_start=str(t0), t_end=str(t1))
-            except Exception:
-                pass
-            # 以前の「最新へオートズーム」機能は廃止しました（強調表示のみ維持）
-except Exception:
-    pass
 
 # ---- 赤影（重要度別ウィンドウ）を重ねる ----
 if use_news_shade and not windows_df.empty:
